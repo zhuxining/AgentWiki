@@ -54,6 +54,10 @@ class SearchQuery(BaseModel):
     text: str
     mode: SearchMode = "keyword"
     limit: int = Field(default=20, ge=1, le=100)
+    page: int = Field(default=1, ge=1)
+    tags: list[str] = Field(default_factory=list)
+    note_types: list[str] = Field(default_factory=list)
+    metadata_filters: dict[str, object] = Field(default_factory=dict)
 
 
 class SearchResult(BaseModel):

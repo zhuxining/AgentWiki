@@ -54,12 +54,30 @@ def write_note(
     path: str,
     content: str = typer.Option("", help="Markdown body."),
     metadata: str | None = typer.Option(None, help="Frontmatter as a JSON object."),
+    title: str | None = typer.Option(None, help="Title used when path is omitted."),
+    directory: str = typer.Option("", help="Directory used with title."),
+    tags: str | None = typer.Option(None, help="Comma-separated tags."),
+    note_type: str = typer.Option("note", help="Frontmatter type."),
+    overwrite: bool = typer.Option(False, help="Replace an existing document."),
     root: Path | None = typer.Option(None, help="Document library root."),
     index: Path | None = typer.Option(None, help="SQLite index path."),
 ) -> None:
     """Create a Markdown document and index it."""
     with _service(root, index) as service:
-        note = service.write(path, content, _metadata(metadata))
+        note = service.write(
+            path,
+            content,
+            _metadata(metadata),
+            title=title,
+            directory=directory,
+            tags=(
+                None
+                if tags is None
+                else [item.strip() for item in tags.split(",") if item.strip()]
+            ),
+            note_type=note_type,
+            overwrite=overwrite,
+        )
     typer.echo(note.path.value)
 
 
@@ -96,6 +114,34 @@ def update_note(
             frontmatter=None if metadata is None else _metadata(metadata),
         )
     typer.echo(path)
+
+
+@app.command("edit-note")
+def edit_note(
+    identifier: str,
+    operation: str = typer.Option(..., help="append, prepend, find_replace, or section operation."),
+    content: str = typer.Option(..., help="Replacement or inserted Markdown."),
+    find_text: str | None = typer.Option(None),
+    section: str | None = typer.Option(None),
+    expected_replacements: int = typer.Option(1, min=0),
+    replace_subsections: bool = typer.Option(True),
+    metadata: str | None = typer.Option(None),
+    root: Path | None = typer.Option(None),
+    index: Path | None = typer.Option(None),
+) -> None:
+    """Apply one incremental Markdown edit and refresh its index row."""
+    with _service(root, index) as service:
+        note = service.edit(
+            identifier,
+            operation=operation,
+            content=content,
+            find_text=find_text,
+            section=section,
+            expected_replacements=expected_replacements,
+            replace_subsections=replace_subsections,
+            metadata=None if metadata is None else _metadata(metadata),
+        )
+    typer.echo(note.path.value)
 
 
 @app.command("delete-note")

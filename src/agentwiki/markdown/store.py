@@ -9,6 +9,7 @@ from loguru import logger
 import yaml
 
 from agentwiki.domain.models import Frontmatter, Note, NotePath
+from agentwiki.markdown.formatting import format_markdown
 
 
 class MarkdownStore:
@@ -51,6 +52,22 @@ class MarkdownStore:
             raise FileNotFoundError(note_path.value)
         path.unlink()
 
+    def delete_directory(self, directory: str) -> list[NotePath]:
+        path = self._directory_path(directory)
+        if not path.is_dir():
+            raise FileNotFoundError(directory)
+        deleted = [
+            NotePath(value=file.relative_to(self.root).as_posix())
+            for file in sorted(path.rglob("*.md"))
+            if file.is_file() and file.resolve().is_relative_to(self.root)
+        ]
+        for file in sorted(path.rglob("*"), reverse=True):
+            if file.is_file() or file.is_symlink():
+                file.unlink()
+            elif file.is_dir():
+                file.rmdir()
+        return deleted
+
     def move(self, source: NotePath, target: NotePath) -> None:
         source_path = self.path_for(source)
         target_path = self.path_for(target)
@@ -58,6 +75,16 @@ class MarkdownStore:
             raise FileNotFoundError(source.value)
         if target_path.exists():
             raise FileExistsError(target.value)
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        source_path.replace(target_path)
+
+    def move_directory(self, source: str, target: str) -> None:
+        source_path = self._directory_path(source)
+        target_path = self._directory_path(target)
+        if not source_path.is_dir():
+            raise FileNotFoundError(source)
+        if target_path.exists():
+            raise FileExistsError(target)
         target_path.parent.mkdir(parents=True, exist_ok=True)
         source_path.replace(target_path)
 
@@ -93,13 +120,24 @@ class MarkdownStore:
                     if parsed is not None and not isinstance(parsed, dict):
                         raise ValueError("Frontmatter must be a YAML mapping")
                     frontmatter = dict(parsed or {})
-                    content = "".join(lines[end + 1 :]).lstrip("\n")
+                    content = "".join(lines[end + 1 :]).lstrip("\n").rstrip("\n")
         return Note(path=note_path, content=content, frontmatter=frontmatter)
 
     @staticmethod
     def _serialize(note: Note) -> str:
         metadata = yaml.safe_dump(note.frontmatter, allow_unicode=True, sort_keys=False).strip()
-        return f"---\n{metadata}\n---\n\n{note.content}"
+        return format_markdown(f"---\n{metadata}\n---\n\n{note.content}")
+
+    def _directory_path(self, directory: str) -> Path:
+        relative = directory.replace("\\", "/").strip("/")
+        if relative in {"", "."}:
+            return self.root
+        candidate = (self.root / relative).resolve()
+        try:
+            candidate.relative_to(self.root)
+        except ValueError as exc:
+            raise ValueError("directory escapes the document root") from exc
+        return candidate
 
     @staticmethod
     def _atomic_write(path: Path, payload: str) -> None:

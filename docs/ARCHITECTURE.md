@@ -165,13 +165,14 @@ runtime ─────────────────→ services
 
 ## 6. 工具契约
 
-CLI 和 MCP 应共享以下六类应用能力。协议层可以调整参数命名和返回格式，但不能改变语义：
+CLI 和 MCP 应共享以下核心文档能力。协议层可以调整参数命名和返回格式，但不能改变语义：
 
 | 工具 | 语义 |
 | --- | --- |
 | `write_note` | 创建新文档；若产品规则允许，也可作为完整快照写入入口 |
-| `read_note` | 按文档库相对路径读取单份文档 |
-| `update_note` | 更新已有文档的正文、Frontmatter 或属性 |
+| `read_note` | 按路径、`memory://` 标识或唯一标题读取单份文档 |
+| `edit_note` | 对已有文档执行 append、prepend、find-replace 或章节编辑 |
+| `update_note` | 兼容性入口：更新已有文档的完整正文或 Frontmatter |
 | `delete_note` | 删除指定文档 |
 | `move_note` | 将文档移动到文档库内的新相对路径 |
 | `search_notes` | 使用关键词、语义或混合模式搜索并返回匹配文档 |
@@ -185,6 +186,14 @@ CLI 和 MCP 应共享以下六类应用能力。协议层可以调整参数命�
 - **混合查询**：分别取得关键词和语义候选，再由 services 层合并、去重和排序。
 - **索引同步**：文档写入、修改、删除和移动成功后刷新对应索引；启动时支持全量扫描，外部 Markdown 变更支持增量同步或重新扫描。
 - **降级策略**：没有配置 embedding provider 时，`search_notes` 仍支持关键词模式；请求语义模式时返回明确配置错误，不伪造搜索结果。
+
+搜索还支持分页、标签、文档类型和 Frontmatter 精确过滤；不引入云端项目范围、知识图谱或内容审核状态。
+
+### Markdown 编辑与格式化
+
+- `write_note` 支持用标题和目录生成 Markdown 路径，也支持显式相对路径；标签、文档类型和 metadata 写入 Frontmatter。
+- `edit_note` 支持 `append`、`prepend`、`find_replace`、`replace_section`、`insert_before_section` 和 `insert_after_section`，默认保留 Frontmatter，传入 metadata 时合并更新。
+- 文件写入统一通过 `mdformat` 的 GFM 和 Frontmatter 扩展格式化，避免 CLI、MCP 和服务层产生不同的 Markdown 形态。
 
 ## 7. 持久化与安全边界
 
@@ -220,7 +229,7 @@ CLI 和 MCP 应共享以下六类应用能力。协议层可以调整参数命�
 ## 9. 测试策略
 
 - `domain`：测试路径值对象、Frontmatter 规则、搜索条件和错误边界。
-- `services`：使用隔离的 fake store/index 测试六类文档用例的编排、依赖注入和失败传播。
+- `services`：使用隔离的 fake store/index 测试核心文档用例的编排、依赖注入和失败传播。
 - `repository`、`indexing`、`markdown`：测试 Markdown/YAML 解析、文档库路径边界、文件创建、更新、删除、移动、SQLite 索引、FTS 查询和索引重建。
 - `semantic` 集成测试：在本地 embedding 和 sqlite-vec 可用时测试向量生成、语义检索和混合搜索；基础测试不得依赖模型下载或外部 API。
 - `cli`、`mcp`：测试参数转换、调用正确用例和结果序列化，不重复测试领域规则。

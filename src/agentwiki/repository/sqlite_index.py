@@ -189,18 +189,23 @@ class SQLiteIndex:
 
     def search(self, query: SearchQuery) -> list[SearchResult]:
         if query.mode == "semantic":
-            return self._semantic_search(query)
+            return self._paginate(self._semantic_search(query), query)
         if not query.text.strip():
             rows = self.connection.execute(
                 """
                 SELECT path, title, frontmatter_json
                 FROM document_index
                 ORDER BY updated_at DESC
-                LIMIT ?
+                LIMIT -1
                 """,
-                (query.limit,),
+                (),
             ).fetchall()
-            return [self._result(row, score=0.0, snippet="") for row in rows]
+            return self._paginate(
+                self._filter_results(
+                    [self._result(row, score=0.0, snippet="") for row in rows], query
+                ),
+                query,
+            )
 
         match = self._fts_query(query.text)
         rows = self.connection.execute(
@@ -212,17 +217,18 @@ class SQLiteIndex:
             JOIN document_index AS d ON d.path = document_fts.path
             WHERE document_fts MATCH ?
             ORDER BY score
-            LIMIT ?
+            LIMIT -1
             """,
-            (match, query.limit),
+            (match,),
         ).fetchall()
         keyword_results = [
             self._result(row, score=-float(row["score"]), snippet=row["snippet"] or "")
             for row in rows
         ]
+        keyword_results = self._filter_results(keyword_results, query)
         if query.mode == "hybrid" and self.embedding_provider is not None:
             return self._hybrid_search(query, keyword_results)
-        return keyword_results
+        return self._paginate(keyword_results, query)
 
     def rebuild(self, notes: list[Note], *, timestamp: float) -> None:
         with self.connection:
@@ -289,7 +295,7 @@ class SQLiteIndex:
                 FROM document_vectors_vec
                 WHERE embedding MATCH ? AND k = ?
                 """,
-                (json.dumps(query_vector), query.limit),
+                (json.dumps(query_vector), 100),
             ).fetchall()
             results: list[SearchResult] = []
             for row in rows:
@@ -307,7 +313,7 @@ class SQLiteIndex:
                     results.append(
                         self._result(document, score=max(0.0, 1.0 - (distance**2) / 2), snippet="")
                     )
-            return results
+            return self._filter_results(results, query)
         rows = self.connection.execute(
             """
             SELECT d.path, d.title, d.frontmatter_json, v.vector_json
@@ -320,7 +326,9 @@ class SQLiteIndex:
             key=operator.itemgetter(0),
             reverse=True,
         )[: query.limit]
-        return [self._result(row, score=score, snippet="") for score, row in ranked]
+        return self._filter_results(
+            [self._result(row, score=score, snippet="") for score, row in ranked], query
+        )
 
     def _hybrid_search(
         self,
@@ -341,11 +349,36 @@ class SQLiteIndex:
                     frontmatter=result.frontmatter,
                     snippet=existing.snippet,
                 )
-        return sorted(
+        return self._paginate(sorted(
             by_path.values(),
             key=lambda result: result.score,
             reverse=True,
-        )[: query.limit]
+        ), query)
+
+    @staticmethod
+    def _filter_results(results: list[SearchResult], query: SearchQuery) -> list[SearchResult]:
+        def matches(result: SearchResult) -> bool:
+            metadata = result.frontmatter
+            note_type = str(metadata.get("type", metadata.get("note_type", ""))).casefold()
+            if query.note_types and note_type not in {
+                value.casefold() for value in query.note_types
+            }:
+                return False
+            if query.tags:
+                raw_tags = metadata.get("tags", [])
+                note_tags = [raw_tags] if isinstance(raw_tags, str) else raw_tags
+                if not isinstance(note_tags, list) or not all(
+                    tag in [str(item) for item in note_tags] for tag in query.tags
+                ):
+                    return False
+            return all(metadata.get(key) == value for key, value in query.metadata_filters.items())
+
+        return [result for result in results if matches(result)]
+
+    @staticmethod
+    def _paginate(results: list[SearchResult], query: SearchQuery) -> list[SearchResult]:
+        start = (query.page - 1) * query.limit
+        return results[start : start + query.limit]
 
     @staticmethod
     def _cosine(left: list[float], right: list[float]) -> float:

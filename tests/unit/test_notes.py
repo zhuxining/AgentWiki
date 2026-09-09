@@ -137,3 +137,26 @@ def test_semantic_and_hybrid_search_use_configured_provider(tmp_path) -> None:
         assert hybrid[0].path.value == "python.md"
     finally:
         index.close()
+
+
+def test_reference_style_identifiers_incremental_edits_and_filters(service: NoteService) -> None:
+    note = service.write(
+        None,
+        "intro\n\n## Details\n\nold",
+        title="Reference Note",
+        directory="guides",
+        tags=["python", "local"],
+        note_type="guide",
+    )
+    assert note.path.value == "guides/Reference-Note.md"
+    assert service.read("Reference Note").path.value == note.path.value
+
+    service.edit("Reference Note", operation="find_replace", content="new", find_text="old")
+    service.edit("Reference Note", operation="append", content="tail")
+    assert "new" in service.read("guides/Reference-Note.md").content
+    assert service.search("", tags=["python"], note_types=["guide"])[0].title == "Reference Note"
+
+
+def test_markdown_is_formatted_on_write(service: NoteService) -> None:
+    service.write("format.md", "# Heading\n\n-   item")
+    assert service.read("format.md").content == "# Heading\n\n- item"

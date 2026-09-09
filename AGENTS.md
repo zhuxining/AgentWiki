@@ -80,6 +80,8 @@ uv run ty check
 # 运行全部测试
 uv run pytest
 
+# Markdown 写入和编辑由服务层统一经过 mdformat；新增路径不得绕过格式化边界。
+
 # 监听 Markdown 变更并同步索引
 uv run agentwiki watch-index
 

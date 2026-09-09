@@ -43,10 +43,15 @@ CLI 和 MCP 应共享以下应用能力；具体协议参数由各入口适配�
 | --- | --- |
 | `write_note` | 创建文档或写入文档内容与 Frontmatter |
 | `read_note` | 按路径读取文档 |
+| `edit_note` | 以追加、前置、查找替换或章节操作增量修改文档 |
 | `update_note` | 更新文档内容或 Frontmatter |
 | `delete_note` | 删除文档 |
 | `move_note` | 在文档库内移动文档 |
 | `search_notes` | 使用关键词、语义或混合模式搜索文档 |
+
+工具参数参考 Basic Memory 的本地文档工具，但只保留本项目的基础范围：写入支持 `title`、`directory`、`tags`、`note_type`、`metadata` 和 `overwrite`；读取、编辑、移动和删除支持路径或唯一标题；搜索支持分页、标签、文档类型和 Frontmatter 过滤。所有写入统一经过 `mdformat` 的 GFM 与 Frontmatter 扩展格式化。
+
+不实现云端项目、内容审核、知识图谱、schema、Web UI 和非 Markdown 文件工具。
 
 SQLite 索引是派生数据，不是文档事实源。首次使用或索引损坏时可以从 Markdown 文档库扫描重建；语义模型不可用时，关键词搜索仍可独立工作。
 
@@ -70,7 +75,7 @@ uv run agentwiki
 uv run agentwiki-mcp
 ```
 
-当前 CLI 入口用于验证项目环境；文档工具会随对应阶段实现并同步更新本 README。
+CLI 和 MCP 当前都已提供上述文档工具；CLI 适合本地脚本与调试，MCP 适合 Agent 调用。
 
 ## 开发
 
