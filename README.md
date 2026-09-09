@@ -1,17 +1,79 @@
 # AgentWiki
 
-`AgentWiki` is an Obsidian-based shared memory/knowledge layer for agents, providing governed context retrieval, memory proposals, episodic summaries, and project state across Claude, OpenClaw, Pi, Codex, and other AI tools.
+AgentWiki 是面向多个 AI Agent 的本地优先文档层。它以本地 Markdown 文档库为事实源，并将文档索引到本地 SQLite，让 Agent 通过统一工具操作和搜索 Markdown 文档。
 
-## Quick start
+## 目标
 
-```bash
-python -m pip install -e .
-AgentWiki --source notes --target memory
+AgentWiki 的核心能力是：
+
+- 写文档
+- 读文档
+- 改文档
+- 删除文档
+- 移动文档
+- 搜索文档：支持关键词、语义和混合查询
+
+Markdown 正文保存文档内容，YAML Frontmatter 保存类型、状态、范围、项目、标签和来源等可查询元数据。SQLite 保存可重建的搜索索引：关键词索引使用 FTS5，语义索引使用本地 embedding 和向量扩展。
+
+## 架构入口
+
+```text
+Agent / Script
+     │
+     ├── CLI ──┐
+     └── MCP ──┴── Services / Domain ─── Markdown 文档库
 ```
 
-## Development
+- **CLI**：本地调试、初始化、批处理和自动化脚本。
+- **MCP**：向 Agent 暴露共享文档操作工具。
+- **Services / Domain**：承载文档操作、索引同步和搜索规则。
+- **Repository / Indexing**：访问 SQLite 索引并负责扫描、增量同步和索引重建。
+- **SQLite Index**：保存从 Markdown 文档库派生的文档元数据、全文索引和可选向量索引。
+- **Markdown 文档库**：Markdown 文件及其 YAML Frontmatter 的持久化边界。
+
+HTTP API、云端同步、Postgres、多用户服务和 Web UI 不属于当前架构范围。
+
+详细设计见 [架构文档](docs/ARCHITECTURE.md)。
+
+## 工具能力
+
+CLI 和 MCP 应共享以下应用能力；具体协议参数由各入口适配：
+
+| 能力 | 作用 |
+| --- | --- |
+| `write_note` | 创建文档或写入文档内容与 Frontmatter |
+| `read_note` | 按路径读取文档 |
+| `update_note` | 更新文档内容或 Frontmatter |
+| `delete_note` | 删除文档 |
+| `move_note` | 在文档库内移动文档 |
+| `search_notes` | 使用关键词、语义或混合模式搜索文档 |
+
+SQLite 索引是派生数据，不是文档事实源。首次使用或索引损坏时可以从 Markdown 文档库扫描重建；语义模型不可用时，关键词搜索仍可独立工作。
+
+## 快速开始
+
+项目使用 Python 3.14+ 和 `uv`：
 
 ```bash
-python -m pip install -e ".[dev]"
-pytest
+uv sync
+uv run agentwiki
 ```
+
+当前 CLI 入口用于验证项目环境；文档工具会随对应阶段实现并同步更新本 README。
+
+## 开发
+
+```bash
+uv sync
+uv run ruff check
+uv run ty check
+uv run pytest
+```
+
+提交前还应执行：
+
+```bash
+git diff --check
+```
+
+工程约定见 [AGENTS.md](AGENTS.md)。
