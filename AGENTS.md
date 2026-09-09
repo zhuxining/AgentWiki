@@ -70,12 +70,18 @@ uv sync
 # 运行 CLI
 uv run agentwiki
 
+# 启动 MCP（stdio）
+uv run agentwiki-mcp
+
 # 代码检查
 uv run ruff check
 uv run ty check
 
 # 运行全部测试
 uv run pytest
+
+# 监听 Markdown 变更并同步索引
+uv run agentwiki watch-index
 
 # 只运行非外部服务测试
 uv run pytest -m "not integration"
@@ -85,6 +91,8 @@ uv run pytest tests/path/to/test_file.py
 ```
 
 提交前必须执行 `uv run ruff check`、`uv run ty check`、`uv run pytest` 和 `git diff --check`。
+
+
 
 ## 工程规范
 
@@ -102,7 +110,7 @@ uv run pytest tests/path/to/test_file.py
 - 入口层不承载文档操作规则；CLI 和 MCP 必须复用 services 层。
 - Markdown 文件是文档存储的事实边界；不要在入口层复制一套平行存储模型。
 - SQLite 是可删除、可重建的派生索引，不是文档事实源；索引损坏或过期时必须支持从文档库重建。
-- 关键词搜索使用 SQLite FTS5；语义搜索使用本地 embedding 和向量索引，语义依赖不可用时关键词搜索仍必须可用。
+- 关键词搜索使用 SQLite FTS5；语义搜索使用可选的本地 embedding provider 和向量投影，语义依赖不可用时关键词搜索仍必须可用。
 - 跨文档库根目录的路径必须拒绝；敏感信息不得写入文档文件。
 
 ### 测试
@@ -124,3 +132,75 @@ uv run pytest tests/path/to/test_file.py
 Commit 遵循 Conventional Commits：`feat`、`fix`、`refactor`、`docs`、`test`、`chore`。
 
 不要手动修改自动生成文件；与当前任务无关的用户改动必须保留。
+
+
+## 编码规范
+
+编写**类型安全、可读性强、可维护**的 Python 代码。以显式意图优先，避免不必要的技巧。
+
+### 类型注解
+
+- 所有函数的参数和返回值必须有类型注解
+- 使用 `X | Y` 代替 `Union[X, Y]`，使用 `X | None` 代替 `Optional[X]`
+- 使用 `list[T]`、`dict[K, V]`、`tuple[T, ...]` 而非 `List`、`Dict`、`Tuple`
+- 避免使用 `Any`；如类型确实未知，优先使用 `object` 或 `Unknown`
+- 对于复杂类型，使用 `TypeAlias` 或 `type` 语句定义别名（Python 3.12+）
+- Python 3.14 中注解默认懒求值，无需 `from __future__ import annotations`
+
+
+### 现代 Python 语法
+
+- 使用 `match` 语句替代复杂的 `if/elif` 链（Python 3.10+）
+- 使用 `dataclass`（或 `@dataclass(slots=True, frozen=True)`）定义数据结构
+- 优先使用 `pathlib.Path` 而非 `os.path`
+- 使用 f-string 进行字符串格式化；在 Python 3.14 中可用 t-string（PEP 750）进行安全模板化
+- 使用海象运算符 `:=` 避免重复计算（谨慎使用，保持可读性）
+- 用 `enumerate()` 替代手动索引，用 `zip()` 并行迭代
+
+
+### 不可变性与常量
+
+- 对不会修改的集合使用 `tuple` 而非 `list`
+- 用 `Final` 标注模块级常量
+- 用 `@dataclass(frozen=True)` 或 `NamedTuple` 定义不可变数据结构
+- 避免全局可变状态
+
+### 异常处理
+
+- 捕获具体异常类型，而非裸 `except:` 或 `except Exception:`
+- 用 `raise ... from err` 保留异常链
+- 不要捕获异常后直接 `pass` 或无意义地重新抛出
+- 优先用早返回（guard clause）减少嵌套
+
+
+### 函数与模块设计
+
+- 保持函数职责单一，认知复杂度低
+- 使用关键字参数提升调用处可读性（`def func(*, key: str)`）
+- 用 `__all__` 明确声明公开 API
+- 避免在模块顶层执行有副作用的代码
+- 优先使用纯函数（无副作用），将 I/O 推到边界层
+
+### 异步代码
+
+- 使用 `async/await`，避免直接调用 `asyncio.get_event_loop()`
+- 用 `asyncio.TaskGroup`（Python 3.11+）并发管理任务，替代裸 `asyncio.gather`
+- 不要在 async 函数中执行阻塞 I/O，使用 `asyncio.to_thread()` 卸载
+- 用 `async with` 和 `async for` 管理异步资源
+
+### 安全
+
+- 不要用 `eval()` 或 `exec()` 执行动态代码
+- 使用参数化查询，避免 SQL 字符串拼接
+- 不要将密钥、密码硬编码在源码中，使用环境变量或 secrets 管理
+- 对用户输入进行验证和清理（推荐 `pydantic`）
+- 使用 `secrets` 模块生成安全随机数，而非 `random`
+
+### 性能
+
+- 优先使用生成器表达式而非列表推导式（当不需要随机访问时）
+- 避免在循环内进行重复的属性查找，提前绑定到局部变量
+- 用 `__slots__` 减少实例内存占用（或 `@dataclass(slots=True)`）
+- 使用 `collections.deque` 代替列表实现队列
+- 避免频繁的小字符串拼接，用 `"".join(parts)` 或 f-string
+

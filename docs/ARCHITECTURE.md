@@ -187,10 +187,10 @@ CLI 和 MCP 应共享以下六类应用能力。协议层可以调整参数命�
 ### 搜索实现
 
 - **关键词查询**：使用 SQLite FTS5，对路径、标题、正文和可查询 Frontmatter 建立全文索引。
-- **语义查询**：使用本地 embedding 模型生成查询和文档向量，并通过 SQLite 向量扩展进行近邻检索；语义依赖作为可选能力，不得阻塞基础文档操作。
+- **语义查询**：使用可插拔的本地 embedding provider 生成查询和文档向量，并通过 SQLite 向量投影进行近邻检索；`fastembed` 和 `sqlite-vec` 是可选增强，语义依赖不得阻塞基础文档操作。
 - **混合查询**：分别取得关键词和语义候选，再由 services 层合并、去重和排序。
 - **索引同步**：文档写入、修改、删除和移动成功后刷新对应索引；启动时支持全量扫描，外部 Markdown 变更支持增量同步或重新扫描。
-- **降级策略**：没有可用 embedding 模型或向量扩展时，`search_notes` 仍支持关键词模式；索引不可用时返回明确错误，不伪造搜索结果。
+- **降级策略**：没有配置 embedding provider 时，`search_notes` 仍支持关键词模式；请求语义模式时返回明确配置错误，不伪造搜索结果。
 
 ## 7. 持久化与安全边界
 
@@ -211,11 +211,12 @@ CLI 和 MCP 应共享以下六类应用能力。协议层可以调整参数命�
 - 建立 note、notePath、Frontmatter 和 SearchQuery 边界；
 - 实现 `write_note`、`read_note`、`update_note`、`delete_note`、`move_note` 和 `search_notes`；
 - 建立本地 SQLite 索引，支持 FTS5 关键词搜索、全量重建和基础增量同步；
+- 提供可选本地 embedding provider 和 sqlite-vec 向量检索，未启用时保持关键词搜索可用；
 - 为路径安全、Markdown/YAML 解析、文件写入、索引同步和关键词搜索建立测试。
 
 ### 后续增强阶段
 
-- 增加本地 embedding 和 sqlite-vec 语义搜索，以及关键词/语义混合排序；
+- 完善 embedding 模型配置、向量分块、关键词/语义混合排序和大文档库性能；
 - 优化大型 Markdown 文档库的搜索索引、变更监测和结果分页；
 - 增加文档冲突检测、并发写入保护和变更审计；
 - 增加更多 Markdown 文档组织和批量操作能力。

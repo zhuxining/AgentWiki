@@ -13,7 +13,7 @@ AgentWiki 的核心能力是：
 - 移动文档
 - 搜索文档：支持关键词、语义和混合查询
 
-Markdown 正文保存文档内容，YAML Frontmatter 保存类型、状态、范围、项目、标签和来源等可查询元数据。SQLite 保存可重建的搜索索引：关键词索引使用 FTS5，语义索引使用本地 embedding 和向量扩展。
+Markdown 正文保存文档内容，YAML Frontmatter 保存类型、状态、范围、项目、标签和来源等可查询元数据。SQLite 保存可重建的搜索索引：关键词索引使用 FTS5，语义索引使用可插拔的本地 embedding provider 和向量投影。
 
 ## 架构入口
 
@@ -50,6 +50,15 @@ CLI 和 MCP 应共享以下应用能力；具体协议参数由各入口适配�
 
 SQLite 索引是派生数据，不是文档事实源。首次使用或索引损坏时可以从 Markdown 文档库扫描重建；语义模型不可用时，关键词搜索仍可独立工作。
 
+启用本地语义模型：
+
+```bash
+uv sync --extra semantic
+AGENTWIKI_EMBEDDING_MODEL=BAAI/bge-small-en-v1.5 uv run agentwiki rebuild-index
+```
+
+不设置 `AGENTWIKI_EMBEDDING_MODEL` 时，项目只使用 FTS5 关键词索引。
+
 ## 快速开始
 
 项目使用 Python 3.14+ 和 `uv`：
@@ -57,6 +66,8 @@ SQLite 索引是派生数据，不是文档事实源。首次使用或索引损�
 ```bash
 uv sync
 uv run agentwiki
+# 启动 MCP（stdio）
+uv run agentwiki-mcp
 ```
 
 当前 CLI 入口用于验证项目环境；文档工具会随对应阶段实现并同步更新本 README。
@@ -68,6 +79,12 @@ uv sync
 uv run ruff check
 uv run ty check
 uv run pytest
+```
+
+监听文档库的直接修改并自动重建索引：
+
+```bash
+uv run agentwiki watch-index
 ```
 
 提交前还应执行：
