@@ -1,11 +1,13 @@
 """Use cases for Markdown documents and their local index."""
 
+import asyncio
 from pathlib import Path
 import re
 import time
 from typing import cast
 
 from agentwiki.domain.models import (
+    DirectoryEntry,
     Frontmatter,
     Note,
     NotePath,
@@ -235,8 +237,25 @@ class NoteService:
         return len(notes)
 
     async def sync_index(self) -> int:
-        """Reconcile the complete index with the current Markdown document set."""
-        return await self.rebuild_index()
+        """Incrementally reconcile the index with the current Markdown set."""
+        notes = await asyncio.to_thread(self.store.iter_notes)
+        await self.index.sync(notes, timestamp=time.time())
+        return len(notes)
+
+    async def list_directory(
+        self,
+        directory: str = "",
+        *,
+        depth: int = 1,
+        file_name_glob: str | None = None,
+    ) -> list[DirectoryEntry]:
+        """List Markdown files and directories below a document directory."""
+        return await asyncio.to_thread(
+            self.store.list_directory,
+            directory,
+            depth=depth,
+            file_name_glob=file_name_glob,
+        )
 
     @staticmethod
     def _path_from_title(title: str | None, directory: str) -> str:

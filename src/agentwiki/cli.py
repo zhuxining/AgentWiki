@@ -142,6 +142,42 @@ def read_note(
     )
 
 
+@app.command("list-directory")
+def list_directory(
+    directory: str = typer.Argument("", help="Relative document directory; defaults to root."),
+    depth: int = typer.Option(1, min=1, max=10),
+    file_name_glob: str | None = typer.Option(None, "--glob"),
+    page: int = typer.Option(1, min=1),
+    page_size: int = typer.Option(20, min=1, max=200),
+    root: Path | None = typer.Option(None),
+    index: Path | None = typer.Option(None),
+) -> None:
+    """List Markdown files and directories."""
+    entries = _execute(
+        root,
+        index,
+        lambda service: service.list_directory(
+            directory,
+            depth=depth,
+            file_name_glob=file_name_glob,
+        ),
+    )
+    start = (page - 1) * page_size
+    typer.echo(
+        json.dumps(
+            {
+                "directory": directory or ".",
+                "entries": [entry.model_dump() for entry in entries[start : start + page_size]],
+                "page": page,
+                "page_size": page_size,
+                "total": len(entries),
+                "has_more": start + page_size < len(entries),
+            },
+            ensure_ascii=False,
+        )
+    )
+
+
 @app.command("update-note")
 def update_note(
     path: str,

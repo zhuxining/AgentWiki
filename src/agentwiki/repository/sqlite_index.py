@@ -176,7 +176,7 @@ class SQLiteIndex:
             (key, value),
         )
 
-    async def upsert(self, note: Note, *, updated_at: float) -> None:
+    async def upsert(self, note: Note, *, updated_at: float, commit: bool = True) -> None:
         path = note.path.value
         metadata = json.dumps(note.frontmatter, ensure_ascii=False, sort_keys=True)
         content_hash = self._content_hash(note, metadata)
@@ -200,9 +200,10 @@ class SQLiteIndex:
             (path, note.title, note.content, metadata),
         )
         await self._upsert_vector(note)
-        await self.connection.commit()
+        if commit:
+            await self.connection.commit()
 
-    async def delete(self, note_path: NotePath) -> None:
+    async def delete(self, note_path: NotePath, *, commit: bool = True) -> None:
         cursor = await self.connection.execute(
             "SELECT rowid FROM document_vectors WHERE path = ?",
             (note_path.value,),
@@ -220,7 +221,8 @@ class SQLiteIndex:
                 "DELETE FROM document_vectors_vec WHERE rowid = ?",
                 (vector["rowid"],),
             )
-        await self.connection.commit()
+        if commit:
+            await self.connection.commit()
 
     async def move(self, source: NotePath, target: NotePath) -> None:
         cursor = await self.connection.execute(
@@ -398,6 +400,21 @@ class SQLiteIndex:
             )
             await self._upsert_vector(note)
         await self.connection.commit()
+
+    async def sync(self, notes: list[Note], *, timestamp: float) -> None:
+        """Incrementally reconcile indexed notes without clearing the projection."""
+        cursor = await self.connection.execute("SELECT path FROM document_index")
+        indexed_paths = {row["path"] for row in await cursor.fetchall()}
+        current_paths = {note.path.value for note in notes}
+        try:
+            for note in notes:
+                await self.upsert(note, updated_at=timestamp, commit=False)
+            for stale_path in sorted(indexed_paths - current_paths):
+                await self.delete(NotePath(value=stale_path), commit=False)
+            await self.connection.commit()
+        except BaseException:
+            await self.connection.rollback()
+            raise
 
     async def _upsert_vector(self, note: Note) -> None:
         if self.embedding_provider is None:

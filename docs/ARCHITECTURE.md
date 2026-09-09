@@ -176,6 +176,7 @@ CLI 和 MCP 应共享以下核心文档能力。协议层可以调整参数命�
 | `delete_note` | 删除指定文档 |
 | `move_note` | 将文档移动到文档库内的新相对路径 |
 | `search_notes` | 使用关键词、语义或混合模式搜索并返回匹配文档 |
+| `list_directory` | 按目录、深度、文件名 glob 和分页浏览 Markdown 文件 |
 
 这些工具只负责文档操作、索引同步和搜索，不承载内容工作流或项目管理流程。
 
@@ -184,7 +185,7 @@ CLI 和 MCP 应共享以下核心文档能力。协议层可以调整参数命�
 - **关键词查询**：使用 SQLite FTS5，对路径、标题、正文和可查询 Frontmatter 建立全文索引。
 - **语义查询**：使用 `fastembed.TextEmbedding` 生成本地文档和查询向量，并通过 SQLite 向量投影进行近邻检索；`sqlite-vec` 可用时使用向量扩展，否则回退到 SQLite 中保存的 JSON 向量进行本地相似度计算。语义模型按配置惰性加载，不得阻塞未启用语义模型时的基础文档操作。
 - **混合查询**：分别取得关键词和语义候选，再由 services 层合并、去重和排序。
-- **索引同步**：文档写入、修改、删除和移动成功后刷新对应索引；启动时支持全量扫描，外部 Markdown 变更支持增量同步或重新扫描。文档索引保存内容哈希，向量索引保存来源哈希、模型名和维度，避免复用过期向量。
+- **索引同步**：文档写入、修改、删除和移动成功后刷新对应索引；启动时支持全量扫描，外部 Markdown 变更通过内容哈希执行增量同步，删除过期路径，避免每次 watcher 事件清空并重建整个投影。文档索引保存内容哈希，向量索引保存来源哈希、模型名和维度，避免复用过期向量。
 - **降级策略**：没有配置 embedding provider 时，`search_notes` 仍支持关键词模式；请求语义模式时返回明确配置错误，不伪造搜索结果。
 
 搜索还支持分页、标签、文档类型和 Frontmatter 过滤；过滤支持嵌套字段及 `$in`、`$gt`、`$gte`、`$lt`、`$lte`、`$between` 基础比较。不引入云端项目范围、知识图谱或内容审核状态。
@@ -193,6 +194,7 @@ CLI 和 MCP 应共享以下核心文档能力。协议层可以调整参数命�
 
 - `write_note` 支持用标题和目录生成 Markdown 路径，也支持显式相对路径；标签、文档类型和 metadata 写入 Frontmatter，正文自带的 YAML Frontmatter 会被解析并合并。
 - `read_note` 支持返回 Frontmatter 以及按 1-based 行号读取范围；读取范围只影响返回内容，不改变文件。
+- `list_directory` 只浏览文档库内的 Markdown 文件和目录，支持深度、文件名 glob 和分页；不暴露越界软链接或其他文件类型。
 - `edit_note` 支持 `append`、`prepend`、`find_replace`、`replace_section`、`insert_before_section` 和 `insert_after_section`，默认保留 Frontmatter，传入 metadata 时合并更新。
 - `append` 和 `prepend` 在目标不存在时按标题或路径创建文档；目录移动和删除同时更新 SQLite 中受影响的路径。
 - 文件写入统一通过 `mdformat` 的 GFM 和 Frontmatter 扩展格式化，避免 CLI、MCP 和服务层产生不同的 Markdown 形态。
@@ -216,6 +218,7 @@ CLI 和 MCP 应共享以下核心文档能力。协议层可以调整参数命�
 - 建立 note、notePath、Frontmatter 和 SearchQuery 边界；
 - 实现 `write_note`、`read_note`、`update_note`、`delete_note`、`move_note` 和 `search_notes`；
 - 建立本地 SQLite 索引，支持 FTS5 关键词搜索、全量重建和基础增量同步；
+- 提供目录浏览和外部 Markdown 变更的增量索引同步；
 - 使用 `fastembed` 提供本地 embedding，配合可选 `sqlite-vec` 向量检索，未配置模型时保持关键词搜索可用；
 - 为路径安全、Markdown/YAML 解析、文件写入、索引同步和关键词搜索建立测试。
 

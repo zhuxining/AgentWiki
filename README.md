@@ -12,6 +12,7 @@ AgentWiki 的核心能力是：
 - 删除文档
 - 移动文档
 - 搜索文档：支持关键词、语义和混合查询
+- 浏览目录：按深度、文件名 glob 和分页查看 Markdown 文档
 
 Markdown 正文保存文档内容，YAML Frontmatter 保存类型、状态、范围、项目、标签和来源等可查询元数据。SQLite 保存可重建的搜索索引：关键词索引使用 FTS5，语义索引使用可插拔的本地 embedding provider 和向量投影；索引同时记录内容哈希与向量来源状态，避免复用过期数据。
 
@@ -48,6 +49,7 @@ CLI 和 MCP 应共享以下应用能力；具体协议参数由各入口适配�
 | `delete_note` | 删除文档 |
 | `move_note` | 在文档库内移动文档 |
 | `search_notes` | 使用关键词、语义或混合模式搜索文档 |
+| `list_directory` | 浏览文档库中的 Markdown 文件和目录 |
 
 写入支持 `title`、`directory`、`tags`、`note_type`、`metadata` 和 `overwrite`，也接受正文自带的 YAML Frontmatter；读取支持 Frontmatter 和行范围；编辑支持增量操作；移动和删除支持路径、唯一标题和目录；搜索支持 `text/title/permalink/vector/hybrid`、分页、标签、文档类型和 Frontmatter 过滤。所有写入统一经过 `mdformat` 的 GFM 与 Frontmatter 扩展格式化。
 
@@ -87,7 +89,7 @@ uv run ty check
 uv run pytest
 ```
 
-监听文档库的直接修改并自动重建索引：
+监听文档库的直接修改并增量同步索引：
 
 ```bash
 uv run agentwiki watch-index

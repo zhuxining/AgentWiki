@@ -19,7 +19,7 @@ async def watch_documents(service: NoteService, *, stop_event: Event | None = No
         if stop_event is not None and stop_event.is_set():
             return
         if any(_is_markdown_change(path) for _, path in changes):
-            await service.rebuild_index()
+            await service.sync_index()
 
 
 def _is_markdown_change(path: str) -> bool:

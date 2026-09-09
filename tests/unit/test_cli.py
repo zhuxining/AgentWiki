@@ -30,6 +30,10 @@ def test_cli_supports_document_lifecycle(tmp_path) -> None:
     assert searched.exit_code == 0, searched.stdout
     assert json.loads(searched.stdout)[0]["path"]["value"] == "guide.md"
 
+    listed = runner.invoke(app, ["list-directory", *common])
+    assert listed.exit_code == 0, listed.stdout
+    assert json.loads(listed.stdout)["entries"][0]["path"] == "guide.md"
+
     moved = runner.invoke(app, ["move-note", "guide.md", "docs/guide.md", *common])
     assert moved.exit_code == 0, moved.stdout
 

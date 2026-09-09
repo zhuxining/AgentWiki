@@ -1,6 +1,7 @@
 """Safe local Markdown and YAML Frontmatter storage."""
 
 from contextlib import suppress
+import fnmatch
 import os
 from pathlib import Path
 import tempfile
@@ -8,7 +9,7 @@ import tempfile
 from loguru import logger
 import yaml
 
-from agentwiki.domain.models import Frontmatter, Note, NotePath
+from agentwiki.domain.models import DirectoryEntry, Frontmatter, Note, NotePath
 from agentwiki.markdown.formatting import format_markdown
 
 
@@ -115,6 +116,59 @@ class MarkdownStore:
                 logger.warning("Skipping Markdown document {} during index scan: {}", relative, exc)
                 continue
         return notes
+
+    def list_directory(
+        self,
+        directory: str = "",
+        *,
+        depth: int = 1,
+        file_name_glob: str | None = None,
+    ) -> list[DirectoryEntry]:
+        """List Markdown files and directories below a document directory."""
+        if depth < 1:
+            raise ValueError("directory depth must be at least 1")
+        if depth > 10:
+            raise ValueError("directory depth must be at most 10")
+
+        base = self._directory_path(directory)
+        if not base.is_dir():
+            raise FileNotFoundError(directory or ".")
+
+        entries: list[DirectoryEntry] = []
+        for candidate in sorted(base.rglob("*")):
+            relative = candidate.relative_to(base)
+            if len(relative.parts) > depth:
+                continue
+            resolved = candidate.resolve()
+            try:
+                resolved.relative_to(self.root)
+            except ValueError:
+                continue
+            if candidate.is_dir():
+                kind = "directory"
+            elif candidate.is_file() and candidate.suffix.lower() == ".md":
+                if file_name_glob and not fnmatch.fnmatch(candidate.name, file_name_glob):
+                    continue
+                kind = "file"
+            else:
+                continue
+            try:
+                stat = resolved.stat()
+            except OSError:
+                continue
+            entries.append(
+                DirectoryEntry(
+                    path=candidate.relative_to(self.root).as_posix(),
+                    name=candidate.name,
+                    kind=kind,
+                    size=stat.st_size if kind == "file" else None,
+                    modified_at=stat.st_mtime,
+                )
+            )
+        return sorted(
+            entries,
+            key=lambda entry: (entry.kind != "directory", entry.path.casefold()),
+        )
 
     @staticmethod
     def _parse(note_path: NotePath, raw: str) -> Note:

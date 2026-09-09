@@ -92,6 +92,37 @@ async def update_note(
 
 
 @mcp.tool
+async def list_directory(
+    directory: str = "",
+    depth: int = 1,
+    file_name_glob: str | None = None,
+    page: int = 1,
+    page_size: int = 20,
+) -> dict[str, object]:
+    """List Markdown files and directories with bounded depth and pagination."""
+    if page < 1:
+        raise ValueError("page must be at least 1")
+    if page_size < 1 or page_size > 200:
+        raise ValueError("page_size must be between 1 and 200")
+    async with _service() as service:
+        entries = await service.list_directory(
+            directory,
+            depth=depth,
+            file_name_glob=file_name_glob,
+        )
+    start = (page - 1) * page_size
+    page_entries = entries[start : start + page_size]
+    return {
+        "directory": directory or ".",
+        "entries": [entry.model_dump() for entry in page_entries],
+        "page": page,
+        "page_size": page_size,
+        "total": len(entries),
+        "has_more": start + page_size < len(entries),
+    }
+
+
+@mcp.tool
 async def edit_note(
     identifier: str,
     operation: str,

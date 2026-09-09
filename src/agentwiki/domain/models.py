@@ -6,6 +6,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 SearchMode = Literal["keyword", "text", "title", "permalink", "semantic", "vector", "hybrid"]
+DirectoryEntryKind = Literal["file", "directory"]
 type Frontmatter = dict[str, object]
 
 
@@ -70,3 +71,13 @@ class SearchResult(BaseModel):
     score: float
     frontmatter: Frontmatter
     snippet: str
+
+
+class DirectoryEntry(BaseModel):
+    """A Markdown file or directory exposed by local navigation tools."""
+
+    path: str
+    name: str
+    kind: DirectoryEntryKind
+    size: int | None = None
+    modified_at: float | None = None

@@ -108,6 +108,34 @@ async def test_rebuild_index_reconciles_external_markdown_changes(service: NoteS
     assert results[0].frontmatter == {"title": "Two"}
 
 
+async def test_sync_index_updates_and_removes_only_changed_projection_rows(
+    service: NoteService,
+) -> None:
+    await service.write("old.md", "old document")
+    service.store.path_for(NotePath(value="new.md")).write_text(
+        "new document",
+        encoding="utf-8",
+    )
+    service.store.path_for(NotePath(value="old.md")).unlink()
+
+    assert await service.sync_index() == 1
+    assert await service.search("old") == []
+    assert (await service.search("new"))[0].path.value == "new.md"
+
+
+async def test_list_directory_supports_depth_and_file_glob(service: NoteService) -> None:
+    await service.write("guides/one.md", "one")
+    await service.write("guides/nested/two.md", "two")
+
+    immediate = await service.list_directory("guides", depth=1)
+    assert [entry.path for entry in immediate] == ["guides/nested", "guides/one.md"]
+    markdown_files = await service.list_directory("guides", depth=3, file_name_glob="two.md")
+    assert [entry.path for entry in markdown_files] == [
+        "guides/nested",
+        "guides/nested/two.md",
+    ]
+
+
 async def test_rebuild_index_does_not_index_invalid_or_external_symlink_documents(
     service: NoteService,
     tmp_path,

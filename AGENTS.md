@@ -114,6 +114,7 @@ uv run pytest tests/path/to/test_file.py
 - 关键词搜索使用 SQLite FTS5；语义搜索使用可选的本地 embedding provider 和向量投影，语义依赖不可用时关键词搜索仍必须可用。
 - 跨文档库根目录的路径必须拒绝；敏感信息不得写入文档文件。
 - Markdown 写入成功后才更新 SQLite；索引更新失败不得覆盖或回滚 Markdown，必须保留可重建状态。
+- 外部 Markdown 变更优先走增量同步；只有显式 rebuild 或索引恢复场景才清空并全量重建 SQLite 投影。
 - 索引扫描遇到单个文档的 Markdown/YAML 解析错误时，不得静默丢弃；至少记录相对路径和错误原因，并继续处理其他文档。
 
 ### 测试
