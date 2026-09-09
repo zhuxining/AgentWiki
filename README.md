@@ -49,7 +49,7 @@ CLI 和 MCP 应共享以下应用能力；具体协议参数由各入口适配�
 | `move_note` | 在文档库内移动文档 |
 | `search_notes` | 使用关键词、语义或混合模式搜索文档 |
 
-工具参数参考 Basic Memory 的本地文档工具，但只保留本项目的基础范围：写入支持 `title`、`directory`、`tags`、`note_type`、`metadata` 和 `overwrite`，也接受正文自带的 YAML Frontmatter；读取支持 Frontmatter 和行范围；编辑支持增量操作；移动和删除支持路径、唯一标题和目录；搜索支持 `text/title/permalink/vector/hybrid`、分页、标签、文档类型和 Frontmatter 过滤。所有写入统一经过 `mdformat` 的 GFM 与 Frontmatter 扩展格式化。
+写入支持 `title`、`directory`、`tags`、`note_type`、`metadata` 和 `overwrite`，也接受正文自带的 YAML Frontmatter；读取支持 Frontmatter 和行范围；编辑支持增量操作；移动和删除支持路径、唯一标题和目录；搜索支持 `text/title/permalink/vector/hybrid`、分页、标签、文档类型和 Frontmatter 过滤。所有写入统一经过 `mdformat` 的 GFM 与 Frontmatter 扩展格式化。
 
 不实现云端项目、内容审核、知识图谱、schema、Web UI 和非 Markdown 文件工具。
 

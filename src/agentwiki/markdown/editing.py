@@ -15,7 +15,7 @@ def edit_content(
     expected_replacements: int = 1,
     replace_subsections: bool = True,
 ) -> str:
-    """Apply one Basic Memory-style edit operation to a Markdown body."""
+    """Edit operation to a Markdown body."""
     if operation == "append":
         return content.rstrip() + "\n\n" + value.strip() if content.strip() else value.strip()
     if operation == "prepend":
@@ -25,9 +25,7 @@ def edit_content(
             raise ValueError("find_text is required for find_replace")
         count = content.count(find_text)
         if count != expected_replacements:
-            raise ValueError(
-                f"expected {expected_replacements} replacements, found {count}"
-            )
+            raise ValueError(f"expected {expected_replacements} replacements, found {count}")
         return content.replace(find_text, value)
     if operation in {"replace_section", "insert_before_section", "insert_after_section"}:
         if not section:
@@ -86,5 +84,5 @@ def _edit_section(
     if operation == "replace_section":
         return content[: match.end()] + "\n\n" + value.strip() + "\n\n" + content[end:]
     if operation == "insert_before_section":
-        return content[: match.start()] + value.strip() + "\n\n" + content[match.start():]
+        return content[: match.start()] + value.strip() + "\n\n" + content[match.start() :]
     return content[:end].rstrip() + "\n\n" + value.strip() + "\n\n" + content[end:]

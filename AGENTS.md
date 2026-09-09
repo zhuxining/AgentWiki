@@ -74,8 +74,8 @@ uv run agentwiki
 uv run agentwiki-mcp
 
 # 代码检查
-uv run ruff check
-uv run ty check
+uv run ruff check --fix
+uv run ty check --fix
 
 # 运行全部测试
 uv run pytest

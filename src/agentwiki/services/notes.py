@@ -79,8 +79,8 @@ class NoteService:
         return note, content
 
     def resolve(self, identifier: str) -> NotePath:
-        """Resolve a relative path, memory URL, or unique title."""
-        candidate = identifier.removeprefix("memory://").strip("/")
+        """Resolve a relative path, wiki URL, or unique title."""
+        candidate = identifier.removeprefix("wiki://").strip("/")
         if not candidate.endswith(".md"):
             candidate += ".md"
         try:
@@ -155,9 +155,7 @@ class NoteService:
                     replace_subsections=replace_subsections,
                 ),
                 "frontmatter": (
-                    current.frontmatter
-                    if metadata is None
-                    else {**current.frontmatter, **metadata}
+                    current.frontmatter if metadata is None else {**current.frontmatter, **metadata}
                 ),
             }
         )
