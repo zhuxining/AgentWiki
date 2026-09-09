@@ -1,13 +1,12 @@
 """Pure domain values for Markdown documents and search."""
 
-from __future__ import annotations
-
 from pathlib import PurePosixPath
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 SearchMode = Literal["keyword", "semantic", "hybrid"]
+type Frontmatter = dict[str, object]
 
 
 class NotePath(BaseModel):
@@ -39,7 +38,7 @@ class Note(BaseModel):
 
     path: NotePath
     content: str
-    frontmatter: dict[str, object] = Field(default_factory=dict)
+    frontmatter: Frontmatter = Field(default_factory=dict)
 
     @property
     def title(self) -> str:
@@ -65,5 +64,5 @@ class SearchResult(BaseModel):
     path: NotePath
     title: str
     score: float
-    frontmatter: dict[str, object]
+    frontmatter: Frontmatter
     snippet: str

@@ -1,15 +1,13 @@
 """FastMCP protocol adapter for the shared document services."""
 
-from __future__ import annotations
-
 from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Any, cast
+from typing import cast
 
 from fastmcp import FastMCP
 
 from agentwiki.config import Settings
-from agentwiki.domain.models import SearchMode
+from agentwiki.domain.models import Frontmatter, SearchMode
 from agentwiki.repository.embeddings import FastEmbedProvider
 from agentwiki.services.notes import NoteService, create_service
 
@@ -35,8 +33,8 @@ def _service() -> Iterator[NoteService]:
 def write_note(
     path: str,
     content: str,
-    frontmatter: dict[str, Any] | None = None,
-) -> dict[str, Any]:
+    frontmatter: Frontmatter | None = None,
+) -> dict[str, object]:
     """Create a Markdown document and add it to the local index."""
     with _service() as service:
         note = service.write(path, content, frontmatter)
@@ -44,7 +42,7 @@ def write_note(
 
 
 @mcp.tool
-def read_note(path: str) -> dict[str, Any]:
+def read_note(path: str) -> dict[str, object]:
     """Read one Markdown document by its relative path."""
     with _service() as service:
         note = service.read(path)
@@ -55,8 +53,8 @@ def read_note(path: str) -> dict[str, Any]:
 def update_note(
     path: str,
     content: str | None = None,
-    frontmatter: dict[str, Any] | None = None,
-) -> dict[str, Any]:
+    frontmatter: Frontmatter | None = None,
+) -> dict[str, object]:
     """Update a Markdown document and refresh its local index row."""
     with _service() as service:
         note = service.update(path, content=content, frontmatter=frontmatter)
@@ -80,7 +78,7 @@ def move_note(source: str, target: str) -> dict[str, str]:
 
 
 @mcp.tool
-def search_notes(text: str, mode: str = "keyword", limit: int = 20) -> list[dict[str, Any]]:
+def search_notes(text: str, mode: str = "keyword", limit: int = 20) -> list[dict[str, object]]:
     """Search indexed documents with keyword, semantic, or hybrid mode."""
     with _service() as service:
         results = service.search(text, mode=cast(SearchMode, mode), limit=limit)

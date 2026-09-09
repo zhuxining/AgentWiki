@@ -1,10 +1,9 @@
-from __future__ import annotations
-
 from collections.abc import Sequence
+from typing import cast
 
 import pytest
 
-from agentwiki.domain.models import NotePath
+from agentwiki.domain.models import Note, NotePath, SearchMode, SearchQuery
 from agentwiki.markdown.store import MarkdownStore
 from agentwiki.repository.sqlite_index import SQLiteIndex
 from agentwiki.services.notes import NoteService
@@ -25,6 +24,11 @@ class FakeEmbeddingProvider:
         return [float(lowered.count("python")), float(lowered.count("sqlite"))]
 
 
+class FailingIndex:
+    def upsert(self, note: Note, *, updated_at: float) -> None:
+        raise RuntimeError("index unavailable")
+
+
 @pytest.fixture
 def service(tmp_path):
     index = SQLiteIndex(tmp_path / "index.sqlite3")
@@ -42,6 +46,15 @@ def test_note_path_rejects_absolute_and_parent_paths() -> None:
         NotePath(value="../outside.md")
     with pytest.raises(ValueError):
         NotePath(value="notes/today.txt")
+
+
+def test_search_query_validates_mode_and_limit() -> None:
+    with pytest.raises(ValueError):
+        SearchQuery(text="query", mode=cast(SearchMode, "unknown"))
+    with pytest.raises(ValueError):
+        SearchQuery(text="query", limit=0)
+    with pytest.raises(ValueError):
+        SearchQuery(text="query", limit=101)
 
 
 def test_document_lifecycle_updates_index(service: NoteService) -> None:
@@ -66,6 +79,16 @@ def test_document_lifecycle_updates_index(service: NoteService) -> None:
     assert service.search("source truth") == []
 
 
+def test_markdown_remains_source_of_truth_when_index_update_fails(tmp_path) -> None:
+    store = MarkdownStore(tmp_path / "documents")
+    service = NoteService(store, cast(SQLiteIndex, FailingIndex()))
+
+    with pytest.raises(RuntimeError, match="index unavailable"):
+        service.write("kept.md", "Markdown survives index failure")
+
+    assert store.read(NotePath(value="kept.md")).content == "Markdown survives index failure"
+
+
 def test_rebuild_index_reconciles_external_markdown_changes(service: NoteService) -> None:
     service.write("one.md", "alpha document")
     service.store.path_for(NotePath(value="two.md")).write_text(
@@ -78,6 +101,27 @@ def test_rebuild_index_reconciles_external_markdown_changes(service: NoteService
     assert len(results) == 1
     assert results[0].path.value == "two.md"
     assert results[0].frontmatter == {"title": "Two"}
+
+
+def test_rebuild_index_does_not_index_invalid_or_external_symlink_documents(
+    service: NoteService,
+    tmp_path,
+) -> None:
+    service.write("valid.md", "valid document")
+    service.store.path_for(NotePath(value="broken.md")).write_text(
+        "---\n- frontmatter must be a mapping\n---\n\nbroken document\n"
+    )
+    outside = tmp_path / "outside.md"
+    outside.write_text("outside document")
+    external_link = service.store.root / "external.md"
+    try:
+        external_link.symlink_to(outside)
+    except OSError as exc:
+        pytest.skip(f"symbolic links are unavailable: {exc}")
+
+    assert service.rebuild_index() == 1
+    assert service.search("valid")[0].path.value == "valid.md"
+    assert service.search("outside") == []
 
 
 def test_semantic_and_hybrid_search_use_configured_provider(tmp_path) -> None:

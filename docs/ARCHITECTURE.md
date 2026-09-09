@@ -47,7 +47,7 @@ CLI 和 MCP 可以有不同的参数格式和返回格式，但不得各自实�
 
 ### 2.5 Composition root 负责装配
 
-每个入口拥有自己的 composition root，负责读取配置、解析运行模式、创建容器和装配依赖。业务模块通过构造参数或端口接收依赖，不直接读取全局配置。
+每个入口拥有自己的 composition root，负责读取配置、解析运行模式、创建容器和装配依赖。业务模块通过构造参数或适配器接收依赖，不直接读取全局配置。
 
 ### 2.6 本地优先、可演进
 
@@ -71,16 +71,10 @@ Agent / Script
                        Domain rules
                               │
                               ▼
-                    Ports / repository contracts
-                              │
-                              ▼
-                     Markdown document adapter
-                              │
-                              ▼
-                      Markdown 文档库
-                              │
-                              ▼
-                    Local SQLite index
+                    Markdown / SQLite adapters
+                       │             │
+                       ▼             ▼
+                Markdown 文档库   Local SQLite index
 ```
 
 典型流程：
@@ -133,8 +127,8 @@ HTTP API、云端同步和 Web UI 暂不属于当前架构承诺；新增入口�
 
 ```text
 src/agentwiki/
-├── cli/                 # CLI composition root、命令和输出适配
-├── mcp/                 # MCP server、工具、资源和协议适配
+├── cli.py               # CLI composition root、命令和输出适配
+├── mcp.py               # MCP server、工具、资源和协议适配
 ├── domain/              # note、notePath、Frontmatter、SearchQuery、索引规则
 ├── services/            # 文档用例、搜索和索引同步业务流程
 ├── repository/          # SQLite、FTS5 和向量索引访问
@@ -144,30 +138,30 @@ src/agentwiki/
 └── runtime/             # 文件监听、运行上下文和后台索引生命周期
 ```
 
-依赖方向：
+当前实现的依赖方向：
 
 ```text
-cli/mcp composition roots
+cli.py/mcp.py composition roots
             ↓
         services
             ↓
-     domain + contracts
-            ↓
- repository / indexing
-            ↓
-      markdown / SQLite
+        domain
+
+services ───────────────→ markdown / repository
+indexing ────────────────→ markdown / repository
+runtime ─────────────────→ services
 ```
 
 边界规则：
 
 - `domain` 不导入 Typer、FastMCP、Path 读写实现或具体配置管理器。
-- `services` 只依赖领域类型和 repository/indexing 契约；它负责文档用例编排、操作顺序、索引同步和错误转换。
+- `services` 负责文档用例编排、操作顺序、索引同步和错误转换；当前直接接收 MarkdownStore 和 SQLiteIndex，稳定替换边界形成后再抽取 Protocol 契约。
 - `repository` 实现 SQLite、FTS5 和向量索引访问，不负责完整业务流程。
 - `indexing` 实现 Markdown 文档扫描、增量同步和索引重建。
 - `markdown` 实现 Markdown、Frontmatter 和本地文档库文件操作。
 - `runtime` 只承载文件监听、运行上下文和后台索引生命周期；不承载文档业务规则。
 - `cli`、`mcp` 不直接读写文档库，也不复制文档校验和搜索规则。
-- 配置只在 composition root 读取一次，再显式传递给下游模块。
+- 配置只由 composition root 读取，再显式传递给下游模块；业务模块不得直接读取环境变量。
 
 ## 6. 工具契约
 
@@ -221,12 +215,12 @@ CLI 和 MCP 应共享以下六类应用能力。协议层可以调整参数命�
 - 增加文档冲突检测、并发写入保护和变更审计；
 - 增加更多 Markdown 文档组织和批量操作能力。
 
-新增能力时，应先更新文档领域边界和端口，再实现入口适配；不要直接把新规则添加到 CLI command 或 MCP tool 中。
+新增能力时，应先更新文档领域边界和适配边界，再实现入口适配；稳定替换边界形成后再抽取 Protocol，不要直接把新规则添加到 CLI command 或 MCP tool 中。
 
 ## 9. 测试策略
 
 - `domain`：测试路径值对象、Frontmatter 规则、搜索条件和错误边界。
-- `services`：使用 fake contracts 测试六类文档用例的编排、依赖注入和失败传播。
+- `services`：使用隔离的 fake store/index 测试六类文档用例的编排、依赖注入和失败传播。
 - `repository`、`indexing`、`markdown`：测试 Markdown/YAML 解析、文档库路径边界、文件创建、更新、删除、移动、SQLite 索引、FTS 查询和索引重建。
 - `semantic` 集成测试：在本地 embedding 和 sqlite-vec 可用时测试向量生成、语义检索和混合搜索；基础测试不得依赖模型下载或外部 API。
 - `cli`、`mcp`：测试参数转换、调用正确用例和结果序列化，不重复测试领域规则。

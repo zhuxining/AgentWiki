@@ -1,11 +1,16 @@
 """Use cases for Markdown documents and their local index."""
 
-from __future__ import annotations
-
 from pathlib import Path
 import time
 
-from agentwiki.domain.models import Note, NotePath, SearchMode, SearchQuery, SearchResult
+from agentwiki.domain.models import (
+    Frontmatter,
+    Note,
+    NotePath,
+    SearchMode,
+    SearchQuery,
+    SearchResult,
+)
 from agentwiki.markdown.store import MarkdownStore
 from agentwiki.repository.embeddings import EmbeddingProvider
 from agentwiki.repository.sqlite_index import SQLiteIndex
@@ -18,7 +23,7 @@ class NoteService:
         self.store = store
         self.index = index
 
-    def write(self, path: str, content: str, frontmatter: dict[str, object] | None = None) -> Note:
+    def write(self, path: str, content: str, frontmatter: Frontmatter | None = None) -> Note:
         note = Note(path=NotePath(value=path), content=content, frontmatter=dict(frontmatter or {}))
         self.store.write(note)
         self.index.upsert(note, updated_at=time.time())
@@ -32,7 +37,7 @@ class NoteService:
         path: str,
         *,
         content: str | None = None,
-        frontmatter: dict[str, object] | None = None,
+        frontmatter: Frontmatter | None = None,
     ) -> Note:
         current = self.read(path)
         note = current.model_copy(

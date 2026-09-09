@@ -1,17 +1,17 @@
 """Typer CLI composition root for local document operations."""
 
-from __future__ import annotations
-
 from collections.abc import Iterator
 from contextlib import contextmanager
 import json
+from json import JSONDecodeError
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
+from pydantic import TypeAdapter
 import typer
 
 from agentwiki.config import Settings
-from agentwiki.domain.models import SearchMode
+from agentwiki.domain.models import Frontmatter, SearchMode
 from agentwiki.repository.embeddings import FastEmbedProvider
 from agentwiki.runtime.watcher import watch_documents
 from agentwiki.services.notes import NoteService, create_service
@@ -19,13 +19,19 @@ from agentwiki.services.notes import NoteService, create_service
 app = typer.Typer(no_args_is_help=True, help="Operate on a local Markdown document library.")
 
 
-def _metadata(value: str | None) -> dict[str, Any]:
+def _metadata(value: str | None) -> Frontmatter:
     if not value:
         return {}
-    parsed = json.loads(value)
+    try:
+        parsed: object = json.loads(value)
+    except JSONDecodeError as exc:
+        raise typer.BadParameter("metadata must be valid JSON") from exc
     if not isinstance(parsed, dict):
         raise typer.BadParameter("metadata must be a JSON object")
-    return parsed
+    try:
+        return TypeAdapter(Frontmatter).validate_python(parsed)
+    except ValueError as exc:
+        raise typer.BadParameter("metadata must contain string keys") from exc
 
 
 @contextmanager

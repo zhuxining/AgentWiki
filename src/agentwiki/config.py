@@ -1,7 +1,5 @@
 """Runtime configuration for the local AgentWiki process."""
 
-from __future__ import annotations
-
 from pathlib import Path
 
 from pydantic import field_validator

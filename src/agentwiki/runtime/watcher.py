@@ -1,15 +1,14 @@
 """Optional local filesystem watcher for keeping the derived index fresh."""
 
-from __future__ import annotations
-
 from pathlib import Path
+from threading import Event
 
 from watchfiles import watch
 
 from agentwiki.services.notes import NoteService
 
 
-def watch_documents(service: NoteService, *, stop_event=None) -> None:
+def watch_documents(service: NoteService, *, stop_event: Event | None = None) -> None:
     """Rebuild the local index after Markdown changes.
 
     The first implementation deliberately uses a full rebuild for each change

@@ -1,7 +1,5 @@
 """Local SQLite FTS5 index derived from Markdown documents."""
 
-from __future__ import annotations
-
 import contextlib
 import json
 import operator

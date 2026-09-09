@@ -1,15 +1,14 @@
 """Safe local Markdown and YAML Frontmatter storage."""
 
-from __future__ import annotations
-
+from contextlib import suppress
 import os
 from pathlib import Path
 import tempfile
-from typing import Any
 
+from loguru import logger
 import yaml
 
-from agentwiki.domain.models import Note, NotePath
+from agentwiki.domain.models import Frontmatter, Note, NotePath
 
 
 class MarkdownStore:
@@ -68,16 +67,19 @@ class MarkdownStore:
         for path in sorted(self.root.rglob("*.md")):
             relative = path.relative_to(self.root).as_posix()
             try:
+                resolved = path.resolve()
+                resolved.relative_to(self.root)
                 notes.append(
-                    self._parse(NotePath(value=relative), path.read_text(encoding="utf-8"))
+                    self._parse(NotePath(value=relative), resolved.read_text(encoding="utf-8"))
                 )
-            except UnicodeDecodeError, ValueError, yaml.YAMLError:
+            except (UnicodeDecodeError, ValueError, yaml.YAMLError, OSError) as exc:
+                logger.warning("Skipping Markdown document {} during index scan: {}", relative, exc)
                 continue
         return notes
 
     @staticmethod
     def _parse(note_path: NotePath, raw: str) -> Note:
-        frontmatter: dict[str, Any] = {}
+        frontmatter: Frontmatter = {}
         content = raw
         if raw.startswith("---"):
             lines = raw.splitlines(keepends=True)
@@ -108,6 +110,7 @@ class MarkdownStore:
                 handle.flush()
                 os.fsync(handle.fileno())
             Path(temporary).replace(path)
-        except Exception:
-            Path(temporary).unlink(missing_ok=True)
+        except OSError, UnicodeError:
+            with suppress(OSError):
+                Path(temporary).unlink()
             raise
