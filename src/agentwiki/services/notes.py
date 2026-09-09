@@ -3,6 +3,7 @@
 from pathlib import Path
 import re
 import time
+from typing import cast
 
 from agentwiki.domain.models import (
     Frontmatter,
@@ -44,6 +45,10 @@ class NoteService:
             metadata["tags"] = tags
         metadata.setdefault("type", note_type)
         resolved_path = path or self._path_from_title(title, directory)
+        parsed = MarkdownStore.parse(NotePath(value="__content__.md"), content)
+        if parsed.frontmatter:
+            metadata = {**metadata, **parsed.frontmatter}
+            content = parsed.content
         note = Note(path=NotePath(value=resolved_path), content=content, frontmatter=metadata)
         self.store.write(note, overwrite=overwrite)
         self.index.upsert(note, updated_at=time.time())
@@ -51,6 +56,27 @@ class NoteService:
 
     def read(self, identifier: str) -> Note:
         return self.store.read(self.resolve(identifier))
+
+    def read_text(
+        self,
+        identifier: str,
+        *,
+        include_frontmatter: bool = False,
+        start_line: int | None = None,
+        end_line: int | None = None,
+    ) -> tuple[Note, str]:
+        """Read a note body, optionally including frontmatter or a line range."""
+        note = self.read(identifier)
+        content = note.content
+        if include_frontmatter:
+            content = self.store.raw(note.path)
+        if start_line is not None or end_line is not None:
+            first = start_line or 1
+            last = end_line or len(content.splitlines())
+            if first < 1 or last < first:
+                raise ValueError("line range must be positive and ordered")
+            content = "\n".join(content.splitlines()[first - 1 : last])
+        return note, content
 
     def resolve(self, identifier: str) -> NotePath:
         """Resolve a relative path, memory URL, or unique title."""
@@ -104,7 +130,19 @@ class NoteService:
         replace_subsections: bool = True,
         metadata: Frontmatter | None = None,
     ) -> Note:
-        current = self.read(identifier)
+        try:
+            current = self.read(identifier)
+        except FileNotFoundError:
+            if operation not in {"append", "prepend"}:
+                raise
+            title, directory = self._parse_identifier(identifier)
+            return self.write(
+                None,
+                content,
+                metadata,
+                title=title,
+                directory=directory,
+            )
         updated = current.model_copy(
             update={
                 "content": edit_content(
@@ -137,7 +175,18 @@ class NoteService:
         self.store.delete(note_path)
         self.index.delete(note_path)
 
-    def move(self, source: str, target: str, *, destination_folder: bool = False) -> str:
+    def move(
+        self,
+        source: str,
+        target: str,
+        *,
+        destination_folder: bool = False,
+        is_directory: bool = False,
+    ) -> str:
+        if is_directory:
+            self.store.move_directory(source, target)
+            self.index.move_prefix(source, target)
+            return target
         source_path = self.resolve(source)
         target_path = (
             NotePath(value=f"{target.rstrip('/')}/{source_path.value.rsplit('/', 1)[-1]}")
@@ -159,10 +208,21 @@ class NoteService:
         note_types: list[str] | None = None,
         metadata_filters: Frontmatter | None = None,
     ) -> list[SearchResult]:
+        query_tags = list(tags or [])
+        search_terms: list[str] = []
+        for token in text.split():
+            if token.casefold().startswith("tag:") and len(token) > 4:
+                query_tags.append(token[4:])
+            else:
+                search_terms.append(token)
+        normalized_mode = cast(
+            SearchMode,
+            {"text": "keyword", "vector": "semantic"}.get(mode, mode),
+        )
         return self.index.search(
             SearchQuery(
-                text=text,
-                mode=mode,
+                text=" ".join(search_terms),
+                mode=normalized_mode,
                 limit=limit,
                 page=page,
                 tags=tags or [],
@@ -188,6 +248,14 @@ class NoteService:
         if not slug:
             raise ValueError("title does not produce a valid Markdown filename")
         return f"{directory.strip('/').strip() + '/' if directory.strip('/') else ''}{slug}.md"
+
+    @staticmethod
+    def _parse_identifier(identifier: str) -> tuple[str, str]:
+        cleaned = identifier.removeprefix("memory://").strip("/")
+        if cleaned.lower().endswith(".md"):
+            cleaned = cleaned[:-3]
+        directory, _, title = cleaned.rpartition("/")
+        return title or directory, directory if title else ""
 
 
 def create_service(

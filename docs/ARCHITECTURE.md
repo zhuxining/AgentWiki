@@ -191,8 +191,10 @@ CLI 和 MCP 应共享以下核心文档能力。协议层可以调整参数命�
 
 ### Markdown 编辑与格式化
 
-- `write_note` 支持用标题和目录生成 Markdown 路径，也支持显式相对路径；标签、文档类型和 metadata 写入 Frontmatter。
+- `write_note` 支持用标题和目录生成 Markdown 路径，也支持显式相对路径；标签、文档类型和 metadata 写入 Frontmatter，正文自带的 YAML Frontmatter 会被解析并合并。
+- `read_note` 支持返回 Frontmatter 以及按 1-based 行号读取范围；读取范围只影响返回内容，不改变文件。
 - `edit_note` 支持 `append`、`prepend`、`find_replace`、`replace_section`、`insert_before_section` 和 `insert_after_section`，默认保留 Frontmatter，传入 metadata 时合并更新。
+- `append` 和 `prepend` 在目标不存在时按标题或路径创建文档；目录移动和删除同时更新 SQLite 中受影响的路径。
 - 文件写入统一通过 `mdformat` 的 GFM 和 Frontmatter 扩展格式化，避免 CLI、MCP 和服务层产生不同的 Markdown 形态。
 
 ## 7. 持久化与安全边界

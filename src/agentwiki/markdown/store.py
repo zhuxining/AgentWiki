@@ -37,6 +37,12 @@ class MarkdownStore:
             raise FileNotFoundError(note_path.value)
         return self._parse(note_path, path.read_text(encoding="utf-8"))
 
+    def raw(self, note_path: NotePath) -> str:
+        path = self.path_for(note_path)
+        if not path.is_file():
+            raise FileNotFoundError(note_path.value)
+        return path.read_text(encoding="utf-8")
+
     def write(self, note: Note, *, overwrite: bool = False) -> Note:
         path = self.path_for(note.path)
         if path.exists() and not overwrite:
@@ -106,6 +112,11 @@ class MarkdownStore:
 
     @staticmethod
     def _parse(note_path: NotePath, raw: str) -> Note:
+        return MarkdownStore.parse(note_path, raw)
+
+    @staticmethod
+    def parse(note_path: NotePath, raw: str) -> Note:
+        """Parse Markdown text into a note, including an optional YAML header."""
         frontmatter: Frontmatter = {}
         content = raw
         if raw.startswith("---"):

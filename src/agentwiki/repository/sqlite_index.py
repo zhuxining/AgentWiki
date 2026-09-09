@@ -187,8 +187,20 @@ class SQLiteIndex:
                         (cursor.lastrowid, vector["vector_json"]),
                     )
 
+    def move_prefix(self, source: str, target: str) -> None:
+        """Move all indexed paths below a directory after the files move."""
+        prefix = source.strip("/") + "/"
+        rows = self.connection.execute(
+            "SELECT path FROM document_index WHERE path LIKE ? ORDER BY length(path)",
+            (prefix + "%",),
+        ).fetchall()
+        for row in rows:
+            old = row["path"]
+            new = target.strip("/") + "/" + old[len(prefix) :]
+            self.move(NotePath(value=old), NotePath(value=new))
+
     def search(self, query: SearchQuery) -> list[SearchResult]:
-        if query.mode == "semantic":
+        if query.mode in {"semantic", "vector"}:
             return self._paginate(self._semantic_search(query), query)
         if not query.text.strip():
             rows = self.connection.execute(
@@ -203,6 +215,24 @@ class SQLiteIndex:
             return self._paginate(
                 self._filter_results(
                     [self._result(row, score=0.0, snippet="") for row in rows], query
+                ),
+                query,
+            )
+
+        if query.mode in {"title", "permalink"}:
+            column = "title" if query.mode == "title" else "path"
+            rows = self.connection.execute(
+                f"""
+                SELECT path, title, frontmatter_json
+                FROM document_index
+                WHERE {column} LIKE ? COLLATE NOCASE
+                ORDER BY updated_at DESC
+                """,
+                (f"%{query.text}%",),
+            ).fetchall()
+            return self._paginate(
+                self._filter_results(
+                    [self._result(row, score=1.0, snippet="") for row in rows], query
                 ),
                 query,
             )
@@ -367,9 +397,10 @@ class SQLiteIndex:
             if query.tags:
                 raw_tags = metadata.get("tags", [])
                 note_tags = [raw_tags] if isinstance(raw_tags, str) else raw_tags
-                if not isinstance(note_tags, list) or not all(
-                    tag in [str(item) for item in note_tags] for tag in query.tags
-                ):
+                if not isinstance(note_tags, list):
+                    return False
+                normalized_tags = {str(item).casefold() for item in note_tags}
+                if not all(tag.casefold() in normalized_tags for tag in query.tags):
                     return False
             return all(metadata.get(key) == value for key, value in query.metadata_filters.items())
 

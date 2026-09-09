@@ -51,7 +51,7 @@ def _service(root: Path | None, index: Path | None) -> Iterator[NoteService]:
 
 @app.command("write-note")
 def write_note(
-    path: str,
+    path: str = typer.Argument("", help="Relative .md path; omit when using --title."),
     content: str = typer.Option("", help="Markdown body."),
     metadata: str | None = typer.Option(None, help="Frontmatter as a JSON object."),
     title: str | None = typer.Option(None, help="Title used when path is omitted."),
@@ -65,7 +65,7 @@ def write_note(
     """Create a Markdown document and index it."""
     with _service(root, index) as service:
         note = service.write(
-            path,
+            path or None,
             content,
             _metadata(metadata),
             title=title,
@@ -84,15 +84,23 @@ def write_note(
 @app.command("read-note")
 def read_note(
     path: str,
+    include_frontmatter: bool = typer.Option(False, "--include-frontmatter"),
+    start_line: int | None = typer.Option(None, min=1),
+    end_line: int | None = typer.Option(None, min=1),
     root: Path | None = typer.Option(None),
     index: Path | None = typer.Option(None),
 ) -> None:
     """Read a Markdown document as JSON."""
     with _service(root, index) as service:
-        note = service.read(path)
+        note, content = service.read_text(
+            path,
+            include_frontmatter=include_frontmatter,
+            start_line=start_line,
+            end_line=end_line,
+        )
     typer.echo(
         json.dumps(
-            {"path": note.path.value, "content": note.content, "frontmatter": note.frontmatter},
+            {"path": note.path.value, "content": content, "frontmatter": note.frontmatter},
             ensure_ascii=False,
         )
     )
@@ -147,24 +155,32 @@ def edit_note(
 @app.command("delete-note")
 def delete_note(
     path: str,
+    is_directory: bool = typer.Option(False, "--is-directory"),
     root: Path | None = typer.Option(None),
     index: Path | None = typer.Option(None),
 ) -> None:
     """Delete a Markdown document and its index row."""
     with _service(root, index) as service:
-        service.delete(path)
+        service.delete(path, is_directory=is_directory)
 
 
 @app.command("move-note")
 def move_note(
     source: str,
     target: str,
+    destination_folder: bool = typer.Option(False, "--destination-folder"),
+    is_directory: bool = typer.Option(False, "--is-directory"),
     root: Path | None = typer.Option(None),
     index: Path | None = typer.Option(None),
 ) -> None:
     """Move a Markdown document within the document library."""
     with _service(root, index) as service:
-        service.move(source, target)
+        service.move(
+            source,
+            target,
+            destination_folder=destination_folder,
+            is_directory=is_directory,
+        )
     typer.echo(target)
 
 
@@ -172,13 +188,28 @@ def move_note(
 def search_notes(
     text: str,
     mode: str = typer.Option("keyword", help="keyword, semantic, or hybrid."),
+    search_type: str | None = typer.Option(None, help="text, title, permalink, vector, or hybrid."),
     limit: int = typer.Option(20, min=1, max=100),
+    page: int = typer.Option(1, min=1),
+    tags: str | None = typer.Option(None, help="Comma-separated tags."),
+    note_types: str | None = typer.Option(None, help="Comma-separated frontmatter types."),
+    metadata: str | None = typer.Option(None, help="Frontmatter filters as JSON."),
     root: Path | None = typer.Option(None),
     index: Path | None = typer.Option(None),
 ) -> None:
     """Search indexed Markdown documents."""
     with _service(root, index) as service:
-        results = service.search(text, mode=cast(SearchMode, mode), limit=limit)
+        results = service.search(
+            text,
+            mode=cast(SearchMode, search_type or mode),
+            limit=limit,
+            page=page,
+            tags=None if tags is None else [item.strip() for item in tags.split(",")],
+            note_types=None
+            if note_types is None
+            else [item.strip() for item in note_types.split(",")],
+            metadata_filters=None if metadata is None else _metadata(metadata),
+        )
     typer.echo(
         json.dumps([result.model_dump() for result in results], ensure_ascii=False, default=str)
     )

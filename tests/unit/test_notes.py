@@ -160,3 +160,53 @@ def test_reference_style_identifiers_incremental_edits_and_filters(service: Note
 def test_markdown_is_formatted_on_write(service: NoteService) -> None:
     service.write("format.md", "# Heading\n\n-   item")
     assert service.read("format.md").content == "# Heading\n\n- item"
+
+
+def test_edit_append_creates_and_search_supports_reference_modes(service: NoteService) -> None:
+    created = service.edit("new note", operation="append", content="created")
+    assert created.path.value == "new-note.md"
+    service.write("docs/guide.md", "SQLite guide", {"title": "Guide"})
+
+    assert service.search("Guide", mode="title")[0].path.value == "docs/guide.md"
+    assert service.search("docs/guide", mode="permalink")[0].path.value == "docs/guide.md"
+    assert service.search("tag:local", tags=["local"]) == []
+
+
+def test_directory_move_updates_index_and_read_ranges(service: NoteService) -> None:
+    service.write("drafts/a.md", "line one\nline two", {"title": "A"})
+    service.move("drafts", "archive", is_directory=True)
+    assert service.search("line two")[0].path.value == "archive/a.md"
+    note, content = service.read_text(
+        "A", include_frontmatter=True, start_line=1, end_line=3
+    )
+    assert note.path.value == "archive/a.md"
+    assert "title: A" in content
+
+
+def test_write_merges_frontmatter_supplied_inside_content(service: NoteService) -> None:
+    note = service.write(
+        "embedded.md",
+        "---\ntitle: Embedded\ntype: guide\n---\n\n# Body",
+        title="Ignored by content",
+        note_type="note",
+    )
+    assert note.title == "Embedded"
+    assert note.frontmatter["type"] == "guide"
+    assert note.content == "# Body"
+
+
+def test_section_edit_supports_nested_paths_and_duplicate_headers(service: NoteService) -> None:
+    service.write(
+        "sections.md",
+        "# Root\n\n## Details\n\nfirst\n\n### Child\n\nkeep\n\n## Details\n\nsecond",
+    )
+    service.edit(
+        "sections.md",
+        operation="replace_section",
+        section="Root/Details[1]",
+        content="replacement",
+    )
+    body = service.read("sections.md").content
+    assert "first" in body
+    assert "replacement" in body
+    assert "second" not in body

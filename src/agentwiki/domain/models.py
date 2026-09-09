@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-SearchMode = Literal["keyword", "semantic", "hybrid"]
+SearchMode = Literal["keyword", "text", "title", "permalink", "semantic", "vector", "hybrid"]
 type Frontmatter = dict[str, object]
 
 

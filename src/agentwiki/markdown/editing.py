@@ -51,11 +51,27 @@ def _edit_section(
     replace_subsections: bool,
 ) -> str:
     headings = list(_HEADING.finditer(content))
-    wanted = section.removeprefix("#").strip().casefold()
-    match = next(
-        (item for item in headings if item.group(2).casefold() == wanted),
-        None,
-    )
+    selector = section.strip()
+    duplicate_index = 0
+    duplicate_match = re.search(r"\[(\d+)\]\s*$", selector)
+    if duplicate_match:
+        duplicate_index = int(duplicate_match.group(1))
+        selector = selector[: duplicate_match.start()].rstrip()
+    segments = [segment.lstrip("#").strip().casefold() for segment in selector.split("/")]
+    stack: list[tuple[int, str]] = []
+    occurrences: dict[tuple[str, ...], int] = {}
+    match = None
+    for candidate in headings:
+        level = len(candidate.group(1))
+        while stack and stack[-1][0] >= level:
+            stack.pop()
+        stack.append((level, candidate.group(2).casefold()))
+        path = tuple(text for _, text in stack)
+        occurrence = occurrences.get(path, 0)
+        occurrences[path] = occurrence + 1
+        if path == tuple(segments) and occurrence == duplicate_index:
+            match = candidate
+            break
     if match is None:
         raise ValueError(f"section not found: {section}")
     level = len(match.group(1))

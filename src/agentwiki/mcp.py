@@ -31,19 +31,19 @@ def _service() -> Iterator[NoteService]:
 
 @mcp.tool
 def write_note(
+    title: str,
     content: str,
-    path: str | None = None,
-    title: str | None = None,
     directory: str = "",
     tags: list[str] | None = None,
     note_type: str = "note",
     metadata: Frontmatter | None = None,
     overwrite: bool = False,
+    path: str | None = None,
 ) -> dict[str, object]:
     """Create a Markdown document and add it to the local index.
 
-    ``path`` remains supported for callers that already use an explicit path;
-    otherwise ``title`` and ``directory`` determine the Markdown filename.
+    ``path`` is an optional compatibility override; normally ``title`` and
+    ``directory`` determine the Markdown filename.
     """
     with _service() as service:
         note = service.write(
@@ -60,11 +60,21 @@ def write_note(
 
 
 @mcp.tool
-def read_note(identifier: str) -> dict[str, object]:
+def read_note(
+    identifier: str,
+    include_frontmatter: bool = False,
+    start_line: int | None = None,
+    end_line: int | None = None,
+) -> dict[str, object]:
     """Read one Markdown document by path, permalink, or unique title."""
     with _service() as service:
-        note = service.read(identifier)
-    return {"path": note.path.value, "content": note.content, "frontmatter": note.frontmatter}
+        note, content = service.read_text(
+            identifier,
+            include_frontmatter=include_frontmatter,
+            start_line=start_line,
+            end_line=end_line,
+        )
+    return {"path": note.path.value, "content": content, "frontmatter": note.frontmatter}
 
 
 @mcp.tool
@@ -114,17 +124,30 @@ def delete_note(identifier: str, is_directory: bool = False) -> dict[str, str]:
 
 
 @mcp.tool
-def move_note(source: str, target: str, destination_folder: bool = False) -> dict[str, str]:
+def move_note(
+    identifier: str,
+    destination_path: str = "",
+    destination_folder: str | None = None,
+    is_directory: bool = False,
+) -> dict[str, str]:
     """Move one Markdown document within the local document library."""
     with _service() as service:
-        landing = service.move(source, target, destination_folder=destination_folder)
-    return {"source": source, "target": landing, "status": "moved"}
+        if destination_folder is not None and destination_path:
+            raise ValueError("destination_path and destination_folder are mutually exclusive")
+        landing = service.move(
+            identifier,
+            destination_folder or destination_path,
+            destination_folder=destination_folder is not None,
+            is_directory=is_directory,
+        )
+    return {"source": identifier, "target": landing, "status": "moved"}
 
 
 @mcp.tool
 def search_notes(
     query: str = "",
     mode: str = "keyword",
+    search_type: str | None = None,
     limit: int = 20,
     page: int = 1,
     tags: list[str] | None = None,
@@ -135,7 +158,7 @@ def search_notes(
     with _service() as service:
         results = service.search(
             query,
-            mode=cast(SearchMode, mode),
+            mode=cast(SearchMode, search_type or mode),
             limit=limit,
             page=page,
             tags=tags,
