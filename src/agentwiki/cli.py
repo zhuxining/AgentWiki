@@ -104,9 +104,7 @@ def write_note(
             title=title,
             directory=directory,
             tags=(
-                None
-                if tags is None
-                else [item.strip() for item in tags.split(",") if item.strip()]
+                None if tags is None else [item.strip() for item in tags.split(",") if item.strip()]
             ),
             note_type=note_type,
             overwrite=overwrite,
@@ -280,6 +278,7 @@ def watch_index(
     index: Path | None = typer.Option(None),
 ) -> None:
     """Watch Markdown changes and rebuild the local index."""
+
     async def run_watch() -> None:
         async with _service(root, index) as service:
             await service.rebuild_index()

@@ -60,6 +60,8 @@ class MarkdownStore:
 
     def delete_directory(self, directory: str) -> list[NotePath]:
         path = self._directory_path(directory)
+        if path == self.root:
+            raise ValueError("document root cannot be deleted as a directory")
         if not path.is_dir():
             raise FileNotFoundError(directory)
         deleted = [
@@ -87,10 +89,14 @@ class MarkdownStore:
     def move_directory(self, source: str, target: str) -> None:
         source_path = self._directory_path(source)
         target_path = self._directory_path(target)
+        if source_path == self.root:
+            raise ValueError("document root cannot be moved as a directory")
         if not source_path.is_dir():
             raise FileNotFoundError(source)
         if target_path.exists():
             raise FileExistsError(target)
+        if target_path.is_relative_to(source_path):
+            raise ValueError("target directory cannot be inside the source directory")
         target_path.parent.mkdir(parents=True, exist_ok=True)
         source_path.replace(target_path)
 

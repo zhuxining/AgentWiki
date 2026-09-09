@@ -170,7 +170,7 @@ CLI 和 MCP 应共享以下核心文档能力。协议层可以调整参数命�
 | 工具 | 语义 |
 | --- | --- |
 | `write_note` | 创建新文档；若产品规则允许，也可作为完整快照写入入口 |
-| `read_note` | 按路径、`memory://` 标识或唯一标题读取单份文档 |
+| `read_note` | 按路径、`wiki://` 标识或唯一标题读取单份文档 |
 | `edit_note` | 对已有文档执行 append、prepend、find-replace 或章节编辑 |
 | `update_note` | 兼容性入口：更新已有文档的完整正文或 Frontmatter |
 | `delete_note` | 删除指定文档 |

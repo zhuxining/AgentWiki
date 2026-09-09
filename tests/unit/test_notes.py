@@ -145,6 +145,11 @@ async def test_semantic_and_hybrid_search_use_configured_provider(tmp_path) -> N
         await index.close()
 
 
+async def test_semantic_search_requires_query_text(service: NoteService) -> None:
+    with pytest.raises(ValueError, match="non-empty text"):
+        await service.search("", mode="semantic")
+
+
 async def test_reference_style_identifiers_incremental_edits_and_filters(
     service: NoteService,
 ) -> None:
@@ -158,13 +163,14 @@ async def test_reference_style_identifiers_incremental_edits_and_filters(
     )
     assert note.path.value == "guides/Reference-Note.md"
     assert service.read("Reference Note").path.value == note.path.value
+    assert service.read("wiki://Reference Note").path.value == note.path.value
 
     await service.edit("Reference Note", operation="find_replace", content="new", find_text="old")
     await service.edit("Reference Note", operation="append", content="tail")
     assert "new" in service.read("guides/Reference-Note.md").content
-    assert (
-        await service.search("", tags=["python"], note_types=["guide"])
-    )[0].title == "Reference Note"
+    assert (await service.search("", tags=["python"], note_types=["guide"]))[
+        0
+    ].title == "Reference Note"
 
 
 async def test_markdown_is_formatted_on_write(service: NoteService) -> None:
@@ -184,15 +190,40 @@ async def test_edit_append_creates_and_search_supports_reference_modes(
     assert await service.search("tag:local", tags=["local"]) == []
 
 
+async def test_title_search_treats_like_wildcards_as_literal(service: NoteService) -> None:
+    await service.write("percent.md", "one", {"title": "100% Guide"})
+    await service.write("underscore.md", "two", {"title": "100X Guide"})
+
+    results = await service.search("100%", mode="title")
+
+    assert [result.path.value for result in results] == ["percent.md"]
+
+
 async def test_directory_move_updates_index_and_read_ranges(service: NoteService) -> None:
     await service.write("drafts/a.md", "line one\nline two", {"title": "A"})
     await service.move("drafts", "archive", is_directory=True)
     assert (await service.search("line two"))[0].path.value == "archive/a.md"
-    note, content = service.read_text(
-        "A", include_frontmatter=True, start_line=1, end_line=3
-    )
+    note, content = service.read_text("A", include_frontmatter=True, start_line=1, end_line=3)
     assert note.path.value == "archive/a.md"
     assert "title: A" in content
+
+
+async def test_directory_move_rejects_a_target_inside_the_source(
+    service: NoteService,
+) -> None:
+    await service.write("drafts/a.md", "content")
+
+    with pytest.raises(ValueError, match="inside the source"):
+        await service.move("drafts", "drafts/archive", is_directory=True)
+
+
+async def test_directory_root_cannot_be_deleted_or_moved(service: NoteService) -> None:
+    await service.write("root.md", "content")
+
+    with pytest.raises(ValueError, match="document root"):
+        await service.delete("", is_directory=True)
+    with pytest.raises(ValueError, match="document root"):
+        await service.move("", "archive", is_directory=True)
 
 
 async def test_write_merges_frontmatter_supplied_inside_content(service: NoteService) -> None:
@@ -205,6 +236,13 @@ async def test_write_merges_frontmatter_supplied_inside_content(service: NoteSer
     assert note.title == "Embedded"
     assert note.frontmatter["type"] == "guide"
     assert note.content == "# Body"
+
+
+async def test_write_strips_an_empty_frontmatter_block(service: NoteService) -> None:
+    note = await service.write("empty-frontmatter.md", "---\n---\n\n# Body")
+
+    assert note.content == "# Body"
+    assert note.frontmatter == {"type": "note"}
 
 
 async def test_section_edit_supports_nested_paths_and_duplicate_headers(
@@ -236,10 +274,7 @@ async def test_sqlite_metadata_filters_support_nested_values_and_comparisons(
     )
     assert await service.search("", metadata_filters={"owner.team": "local"})
     assert await service.search("", metadata_filters={"priority": {"$gte": 3}})
-    assert (
-        await service.search("", metadata_filters={"priority": {"$between": [1, 2]}})
-        == []
-    )
+    assert await service.search("", metadata_filters={"priority": {"$between": [1, 2]}}) == []
 
 
 async def test_sqlite_invalidates_vectors_when_embedding_model_changes(tmp_path) -> None:

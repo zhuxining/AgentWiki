@@ -46,9 +46,8 @@ class NoteService:
         metadata.setdefault("type", note_type)
         resolved_path = path or self._path_from_title(title, directory)
         parsed = MarkdownStore.parse(NotePath(value="__content__.md"), content)
-        if parsed.frontmatter:
-            metadata = {**metadata, **parsed.frontmatter}
-            content = parsed.content
+        metadata = {**metadata, **parsed.frontmatter}
+        content = parsed.content
         note = Note(path=NotePath(value=resolved_path), content=content, frontmatter=metadata)
         self.store.write(note, overwrite=overwrite)
         await self.index.upsert(note, updated_at=time.time())
@@ -80,7 +79,8 @@ class NoteService:
 
     def resolve(self, identifier: str) -> NotePath:
         """Resolve a relative path, wiki URL, or unique title."""
-        candidate = identifier.removeprefix("wiki://").strip("/")
+        cleaned = self._clean_identifier(identifier)
+        candidate = cleaned.strip("/")
         if not candidate.endswith(".md"):
             candidate += ".md"
         try:
@@ -92,7 +92,7 @@ class NoteService:
         matches = [
             note.path
             for note in self.store.iter_notes()
-            if note.title.casefold() == identifier.casefold()
+            if note.title.casefold() == cleaned.casefold()
         ]
         if len(matches) == 1:
             return matches[0]
@@ -249,11 +249,16 @@ class NoteService:
 
     @staticmethod
     def _parse_identifier(identifier: str) -> tuple[str, str]:
-        cleaned = identifier.removeprefix("memory://").strip("/")
+        cleaned = NoteService._clean_identifier(identifier).strip("/")
         if cleaned.lower().endswith(".md"):
             cleaned = cleaned[:-3]
         directory, _, title = cleaned.rpartition("/")
         return title or directory, directory if title else ""
+
+    @staticmethod
+    def _clean_identifier(identifier: str) -> str:
+        prefix = "wiki://"
+        return identifier[len(prefix) :] if identifier.casefold().startswith(prefix) else identifier
 
 
 async def create_service(
@@ -262,9 +267,7 @@ async def create_service(
     embedding_provider: EmbeddingProvider | None = None,
 ) -> NoteService:
     """Create a local service and its explicitly owned resources."""
+    store = MarkdownStore(document_root)
     index = SQLiteIndex(index_path, embedding_provider=embedding_provider)
     await index.initialize()
-    return NoteService(
-        MarkdownStore(document_root),
-        index,
-    )
+    return NoteService(store, index)

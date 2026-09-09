@@ -1,5 +1,6 @@
 """Local SQLite FTS5 index derived from Markdown documents."""
 
+import asyncio
 import contextlib
 from hashlib import sha256
 import json
@@ -39,15 +40,19 @@ class SQLiteIndex:
         if self._connection is not None:
             return
         self._connection = await aiosqlite.connect(self.path)
-        self.connection.row_factory = sqlite3.Row
-        await self.connection.execute("PRAGMA busy_timeout=5000")
-        await self.connection.execute("PRAGMA synchronous=NORMAL")
-        await self.connection.execute("PRAGMA journal_mode=WAL")
-        await self.connection.execute("PRAGMA foreign_keys=ON")
-        await self._initialize()
-        if self.embedding_provider is not None:
-            self._sqlite_vec_loaded = await self._load_sqlite_vec()
-            await self._prepare_vector_store()
+        try:
+            self.connection.row_factory = sqlite3.Row
+            await self.connection.execute("PRAGMA busy_timeout=5000")
+            await self.connection.execute("PRAGMA synchronous=NORMAL")
+            await self.connection.execute("PRAGMA journal_mode=WAL")
+            await self.connection.execute("PRAGMA foreign_keys=ON")
+            await self._initialize()
+            if self.embedding_provider is not None:
+                self._sqlite_vec_loaded = await self._load_sqlite_vec()
+                await self._prepare_vector_store()
+        except BaseException:
+            await self.close()
+            raise
 
     async def close(self) -> None:
         if self._connection is not None:
@@ -160,9 +165,7 @@ class SQLiteIndex:
         await self.connection.commit()
 
     async def _get_meta(self, key: str) -> str | None:
-        cursor = await self.connection.execute(
-            "SELECT value FROM index_meta WHERE key = ?", (key,)
-        )
+        cursor = await self.connection.execute("SELECT value FROM index_meta WHERE key = ?", (key,))
         row = await cursor.fetchone()
         return None if row is None else str(row["value"])
 
@@ -178,7 +181,7 @@ class SQLiteIndex:
         metadata = json.dumps(note.frontmatter, ensure_ascii=False, sort_keys=True)
         content_hash = self._content_hash(note, metadata)
         await self.connection.execute(
-                """
+            """
                 INSERT INTO document_index(
                     path, title, content, frontmatter_json, updated_at, content_hash
                 ) VALUES (?, ?, ?, ?, ?, ?)
@@ -189,15 +192,13 @@ class SQLiteIndex:
                     updated_at=excluded.updated_at,
                     content_hash=excluded.content_hash
                 """,
-                (path, note.title, note.content, metadata, updated_at, content_hash),
-            )
-        await self.connection.execute(
-            "DELETE FROM document_fts WHERE path = ?", (path,)
+            (path, note.title, note.content, metadata, updated_at, content_hash),
         )
+        await self.connection.execute("DELETE FROM document_fts WHERE path = ?", (path,))
         await self.connection.execute(
-                "INSERT INTO document_fts(path, title, content, frontmatter) VALUES (?, ?, ?, ?)",
-                (path, note.title, note.content, metadata),
-            )
+            "INSERT INTO document_fts(path, title, content, frontmatter) VALUES (?, ?, ?, ?)",
+            (path, note.title, note.content, metadata),
+        )
         await self._upsert_vector(note)
         await self.connection.commit()
 
@@ -210,17 +211,11 @@ class SQLiteIndex:
         await self.connection.execute(
             "DELETE FROM document_index WHERE path = ?", (note_path.value,)
         )
-        await self.connection.execute(
-            "DELETE FROM document_fts WHERE path = ?", (note_path.value,)
-        )
+        await self.connection.execute("DELETE FROM document_fts WHERE path = ?", (note_path.value,))
         await self.connection.execute(
             "DELETE FROM document_vectors WHERE path = ?", (note_path.value,)
         )
-        if (
-            vector is not None
-            and self._sqlite_vec_loaded
-            and await self._vector_table_exists()
-        ):
+        if vector is not None and self._sqlite_vec_loaded and await self._vector_table_exists():
             await self.connection.execute(
                 "DELETE FROM document_vectors_vec WHERE rowid = ?",
                 (vector["rowid"],),
@@ -239,12 +234,8 @@ class SQLiteIndex:
         row = await cursor.fetchone()
         if row is None:
             return
-        await self.connection.execute(
-            "DELETE FROM document_index WHERE path = ?", (source.value,)
-        )
-        await self.connection.execute(
-            "DELETE FROM document_fts WHERE path = ?", (source.value,)
-        )
+        await self.connection.execute("DELETE FROM document_index WHERE path = ?", (source.value,))
+        await self.connection.execute("DELETE FROM document_fts WHERE path = ?", (source.value,))
         cursor = await self.connection.execute(
             """SELECT rowid, model, vector_json, source_hash
             FROM document_vectors WHERE path = ?""",
@@ -254,30 +245,26 @@ class SQLiteIndex:
         await self.connection.execute(
             "DELETE FROM document_vectors WHERE path = ?", (source.value,)
         )
-        if (
-            vector is not None
-            and self._sqlite_vec_loaded
-            and await self._vector_table_exists()
-        ):
+        if vector is not None and self._sqlite_vec_loaded and await self._vector_table_exists():
             await self.connection.execute(
                 "DELETE FROM document_vectors_vec WHERE rowid = ?",
                 (vector["rowid"],),
             )
         await self.connection.execute(
-                """
+            """
                 INSERT INTO document_index(
                     path, title, content, frontmatter_json, updated_at, content_hash
                 ) VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (
-                    target.value,
-                    row["title"],
-                    row["content"],
-                    row["frontmatter_json"],
-                    row["updated_at"],
-                    row["content_hash"],
-                ),
-            )
+            (
+                target.value,
+                row["title"],
+                row["content"],
+                row["frontmatter_json"],
+                row["updated_at"],
+                row["content_hash"],
+            ),
+        )
         await self.connection.execute(
             "INSERT INTO document_fts(path, title, content, frontmatter) VALUES (?, ?, ?, ?)",
             (target.value, row["title"], row["content"], row["frontmatter_json"]),
@@ -315,6 +302,8 @@ class SQLiteIndex:
 
     async def search(self, query: SearchQuery) -> list[SearchResult]:
         if query.mode in {"semantic", "vector"}:
+            if not query.text.strip():
+                raise ValueError("semantic search requires non-empty text")
             return self._paginate(await self._semantic_search(query), query)
         if not query.text.strip():
             cursor = await self.connection.execute(
@@ -340,10 +329,10 @@ class SQLiteIndex:
                 f"""
                 SELECT path, title, frontmatter_json
                 FROM document_index
-                WHERE {column} LIKE ? COLLATE NOCASE
+                WHERE {column} LIKE ? COLLATE NOCASE ESCAPE '\\'
                 ORDER BY updated_at DESC
                 """,
-                (f"%{query.text}%",),
+                (self._like_pattern(query.text),),
             )
             rows = await cursor.fetchall()
             return self._paginate(
@@ -428,7 +417,11 @@ class SQLiteIndex:
         ):
             return
         text = f"{note.title}\n{note.content}\n{metadata}"
-        vector = self.embedding_provider.embed_documents([text])[0]
+        vectors = await asyncio.to_thread(
+            self.embedding_provider.embed_documents,
+            [text],
+        )
+        vector = vectors[0]
         if not vector or not all(math.isfinite(value) for value in vector):
             raise ValueError("embedding provider returned an invalid vector")
         await self._ensure_vector_table(len(vector))
@@ -461,7 +454,10 @@ class SQLiteIndex:
     async def _semantic_search(self, query: SearchQuery) -> list[SearchResult]:
         if self.embedding_provider is None:
             raise RuntimeError("semantic search requires a configured embedding provider")
-        query_vector = self.embedding_provider.embed_query(query.text)
+        query_vector = await asyncio.to_thread(
+            self.embedding_provider.embed_query,
+            query.text,
+        )
         if self._sqlite_vec_loaded and self._vector_dimensions == len(query_vector):
             cursor = await self.connection.execute(
                 """
@@ -487,11 +483,11 @@ class SQLiteIndex:
                 if document is not None:
                     distance = float(row["distance"])
                     results.append(
-                    self._result(
-                        document,
-                        score=max(0.0, 1.0 - (distance**2) / 2),
-                        snippet="",
-                    )
+                        self._result(
+                            document,
+                            score=max(0.0, 1.0 - (distance**2) / 2),
+                            snippet="",
+                        )
                     )
             return self._filter_results(results, query)
         cursor = await self.connection.execute(
@@ -530,11 +526,14 @@ class SQLiteIndex:
                     frontmatter=result.frontmatter,
                     snippet=existing.snippet,
                 )
-        return self._paginate(sorted(
-            by_path.values(),
-            key=lambda result: result.score,
-            reverse=True,
-        ), query)
+        return self._paginate(
+            sorted(
+                by_path.values(),
+                key=lambda result: result.score,
+                reverse=True,
+            ),
+            query,
+        )
 
     @staticmethod
     def _filter_results(results: list[SearchResult], query: SearchQuery) -> list[SearchResult]:
@@ -641,6 +640,11 @@ class SQLiteIndex:
         if not tokens:
             raise ValueError("search text must contain searchable characters")
         return " AND ".join(f'"{token.replace(chr(34), chr(34) * 2)}"' for token in tokens)
+
+    @staticmethod
+    def _like_pattern(text: str) -> str:
+        escaped = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        return f"%{escaped}%"
 
     @staticmethod
     def _result(row: sqlite3.Row, *, score: float, snippet: str) -> SearchResult:

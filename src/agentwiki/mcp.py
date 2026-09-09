@@ -1,5 +1,6 @@
 """FastMCP protocol adapter for the shared document services."""
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import cast
@@ -68,7 +69,8 @@ async def read_note(
 ) -> dict[str, object]:
     """Read one Markdown document by path, permalink, or unique title."""
     async with _service() as service:
-        note, content = service.read_text(
+        note, content = await asyncio.to_thread(
+            service.read_text,
             identifier,
             include_frontmatter=include_frontmatter,
             start_line=start_line,
