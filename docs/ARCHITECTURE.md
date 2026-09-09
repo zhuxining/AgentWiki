@@ -182,7 +182,7 @@ CLI 和 MCP 应共享以下核心文档能力。协议层可以调整参数命�
 ### 搜索实现
 
 - **关键词查询**：使用 SQLite FTS5，对路径、标题、正文和可查询 Frontmatter 建立全文索引。
-- **语义查询**：使用可插拔的本地 embedding provider 生成查询和文档向量，并通过 SQLite 向量投影进行近邻检索；`fastembed` 和 `sqlite-vec` 是可选增强，语义依赖不得阻塞基础文档操作。
+- **语义查询**：使用 `fastembed.TextEmbedding` 生成本地文档和查询向量，并通过 SQLite 向量投影进行近邻检索；`sqlite-vec` 可用时使用向量扩展，否则回退到 SQLite 中保存的 JSON 向量进行本地相似度计算。语义模型按配置惰性加载，不得阻塞未启用语义模型时的基础文档操作。
 - **混合查询**：分别取得关键词和语义候选，再由 services 层合并、去重和排序。
 - **索引同步**：文档写入、修改、删除和移动成功后刷新对应索引；启动时支持全量扫描，外部 Markdown 变更支持增量同步或重新扫描。文档索引保存内容哈希，向量索引保存来源哈希、模型名和维度，避免复用过期向量。
 - **降级策略**：没有配置 embedding provider 时，`search_notes` 仍支持关键词模式；请求语义模式时返回明确配置错误，不伪造搜索结果。
@@ -216,7 +216,7 @@ CLI 和 MCP 应共享以下核心文档能力。协议层可以调整参数命�
 - 建立 note、notePath、Frontmatter 和 SearchQuery 边界；
 - 实现 `write_note`、`read_note`、`update_note`、`delete_note`、`move_note` 和 `search_notes`；
 - 建立本地 SQLite 索引，支持 FTS5 关键词搜索、全量重建和基础增量同步；
-- 提供可选本地 embedding provider 和 sqlite-vec 向量检索，未启用时保持关键词搜索可用；
+- 使用 `fastembed` 提供本地 embedding，配合可选 `sqlite-vec` 向量检索，未配置模型时保持关键词搜索可用；
 - 为路径安全、Markdown/YAML 解析、文件写入、索引同步和关键词搜索建立测试。
 
 ### 后续增强阶段

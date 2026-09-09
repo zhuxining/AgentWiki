@@ -57,14 +57,13 @@ SQLite 索引是派生数据，不是文档事实源。首次使用或索引损�
 
 服务、CLI 和 MCP 的索引访问链路使用 `asyncio`/`aiosqlite`；Markdown 文件仍由文档存储边界统一写入，SQLite 只保存可删除、可重建的派生投影。
 
-启用本地语义模型：
+启用基于 `fastembed` 的本地语义模型：
 
 ```bash
-uv sync --extra semantic
 AGENTWIKI_EMBEDDING_MODEL=BAAI/bge-small-en-v1.5 uv run agentwiki rebuild-index
 ```
 
-不设置 `AGENTWIKI_EMBEDDING_MODEL` 时，项目只使用 FTS5 关键词索引。
+`fastembed` 已作为项目依赖安装，模型按首次语义索引或查询时惰性加载。不设置 `AGENTWIKI_EMBEDDING_MODEL` 时，项目只使用 FTS5 关键词索引，不会下载或加载 embedding 模型。
 
 ## 快速开始
 

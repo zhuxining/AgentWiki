@@ -1,8 +1,9 @@
 """Optional local embedding providers for semantic document search."""
 
 from collections.abc import Iterable, Sequence
-import importlib
 from typing import Protocol, cast
+
+from fastembed import TextEmbedding
 
 
 class _EmbeddingModel(Protocol):
@@ -33,13 +34,7 @@ class FastEmbedProvider:
 
     def _get_model(self) -> _EmbeddingModel:
         if self._model is None:
-            try:
-                module = importlib.import_module("fastembed")
-            except ImportError as exc:
-                raise RuntimeError(
-                    "semantic search requires the optional 'semantic' dependency group"
-                ) from exc
-            self._model = cast(_EmbeddingModel, module.TextEmbedding(model_name=self._model_name))
+            self._model = cast(_EmbeddingModel, TextEmbedding(model_name=self._model_name))
         return self._model
 
     def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
