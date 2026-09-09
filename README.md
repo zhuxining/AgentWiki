@@ -1,12 +1,12 @@
-# ObsidianMemBridge
+# AgentWiki
 
-`obsidianmembridge` is an Obsidian-based shared memory layer for agents, providing governed context retrieval, memory proposals, episodic summaries, and project state across Claude, OpenClaw, Pi, Codex, and other AI tools.
+`AgentWiki` is an Obsidian-based shared memory/knowledge layer for agents, providing governed context retrieval, memory proposals, episodic summaries, and project state across Claude, OpenClaw, Pi, Codex, and other AI tools.
 
 ## Quick start
 
 ```bash
 python -m pip install -e .
-obsidianmembridge --source notes --target memory
+AgentWiki --source notes --target memory
 ```
 
 ## Development

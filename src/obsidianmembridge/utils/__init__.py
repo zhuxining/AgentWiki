@@ -1,1 +1,0 @@
-"""Small stateless utility functions."""
