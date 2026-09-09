@@ -1,22 +1,24 @@
 """Typer CLI composition root for local document operations."""
 
-from collections.abc import Iterator
-from contextlib import contextmanager
+import asyncio
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 import json
 from json import JSONDecodeError
 from pathlib import Path
-from typing import cast
+from typing import TypeVar, cast
 
 from pydantic import TypeAdapter
 import typer
 
 from agentwiki.config import Settings
-from agentwiki.domain.models import Frontmatter, SearchMode
+from agentwiki.domain.models import Frontmatter, Note, SearchMode
 from agentwiki.repository.embeddings import FastEmbedProvider
 from agentwiki.runtime.watcher import watch_documents
 from agentwiki.services.notes import NoteService, create_service
 
 app = typer.Typer(no_args_is_help=True, help="Operate on a local Markdown document library.")
+ResultT = TypeVar("ResultT")
 
 
 def _metadata(value: str | None) -> Frontmatter:
@@ -34,11 +36,11 @@ def _metadata(value: str | None) -> Frontmatter:
         raise typer.BadParameter("metadata must contain string keys") from exc
 
 
-@contextmanager
-def _service(root: Path | None, index: Path | None) -> Iterator[NoteService]:
+@asynccontextmanager
+async def _service(root: Path | None, index: Path | None) -> AsyncIterator[NoteService]:
     settings = Settings.from_env()
     provider = FastEmbedProvider(settings.embedding_model) if settings.embedding_model else None
-    service = create_service(
+    service = await create_service(
         root or settings.document_root,
         index or settings.index_path,
         embedding_provider=provider,
@@ -46,7 +48,36 @@ def _service(root: Path | None, index: Path | None) -> Iterator[NoteService]:
     try:
         yield service
     finally:
-        service.index.close()
+        await service.index.close()
+
+
+def _execute[ResultT](
+    root: Path | None,
+    index: Path | None,
+    operation: Callable[[NoteService], Awaitable[ResultT]],
+) -> ResultT:
+    async def run() -> ResultT:
+        async with _service(root, index) as service:
+            return await operation(service)
+
+    return asyncio.run(run())
+
+
+async def _read_text(
+    service: NoteService,
+    identifier: str,
+    *,
+    include_frontmatter: bool,
+    start_line: int | None,
+    end_line: int | None,
+) -> tuple[Note, str]:
+    return await asyncio.to_thread(
+        service.read_text,
+        identifier,
+        include_frontmatter=include_frontmatter,
+        start_line=start_line,
+        end_line=end_line,
+    )
 
 
 @app.command("write-note")
@@ -63,8 +94,10 @@ def write_note(
     index: Path | None = typer.Option(None, help="SQLite index path."),
 ) -> None:
     """Create a Markdown document and index it."""
-    with _service(root, index) as service:
-        note = service.write(
+    note = _execute(
+        root,
+        index,
+        lambda service: service.write(
             path or None,
             content,
             _metadata(metadata),
@@ -77,7 +110,8 @@ def write_note(
             ),
             note_type=note_type,
             overwrite=overwrite,
-        )
+        ),
+    )
     typer.echo(note.path.value)
 
 
@@ -91,13 +125,17 @@ def read_note(
     index: Path | None = typer.Option(None),
 ) -> None:
     """Read a Markdown document as JSON."""
-    with _service(root, index) as service:
-        note, content = service.read_text(
+    note, content = _execute(
+        root,
+        index,
+        lambda service: _read_text(
+            service,
             path,
             include_frontmatter=include_frontmatter,
             start_line=start_line,
             end_line=end_line,
-        )
+        ),
+    )
     typer.echo(
         json.dumps(
             {"path": note.path.value, "content": content, "frontmatter": note.frontmatter},
@@ -115,12 +153,15 @@ def update_note(
     index: Path | None = typer.Option(None),
 ) -> None:
     """Update a Markdown document and index it."""
-    with _service(root, index) as service:
-        service.update(
+    _execute(
+        root,
+        index,
+        lambda service: service.update(
             path,
             content=content,
             frontmatter=None if metadata is None else _metadata(metadata),
-        )
+        ),
+    )
     typer.echo(path)
 
 
@@ -138,8 +179,10 @@ def edit_note(
     index: Path | None = typer.Option(None),
 ) -> None:
     """Apply one incremental Markdown edit and refresh its index row."""
-    with _service(root, index) as service:
-        note = service.edit(
+    note = _execute(
+        root,
+        index,
+        lambda service: service.edit(
             identifier,
             operation=operation,
             content=content,
@@ -148,7 +191,8 @@ def edit_note(
             expected_replacements=expected_replacements,
             replace_subsections=replace_subsections,
             metadata=None if metadata is None else _metadata(metadata),
-        )
+        ),
+    )
     typer.echo(note.path.value)
 
 
@@ -160,8 +204,7 @@ def delete_note(
     index: Path | None = typer.Option(None),
 ) -> None:
     """Delete a Markdown document and its index row."""
-    with _service(root, index) as service:
-        service.delete(path, is_directory=is_directory)
+    _execute(root, index, lambda service: service.delete(path, is_directory=is_directory))
 
 
 @app.command("move-note")
@@ -174,13 +217,16 @@ def move_note(
     index: Path | None = typer.Option(None),
 ) -> None:
     """Move a Markdown document within the document library."""
-    with _service(root, index) as service:
-        service.move(
+    _execute(
+        root,
+        index,
+        lambda service: service.move(
             source,
             target,
             destination_folder=destination_folder,
             is_directory=is_directory,
-        )
+        ),
+    )
     typer.echo(target)
 
 
@@ -198,8 +244,10 @@ def search_notes(
     index: Path | None = typer.Option(None),
 ) -> None:
     """Search indexed Markdown documents."""
-    with _service(root, index) as service:
-        results = service.search(
+    results = _execute(
+        root,
+        index,
+        lambda service: service.search(
             text,
             mode=cast(SearchMode, search_type or mode),
             limit=limit,
@@ -209,7 +257,8 @@ def search_notes(
             if note_types is None
             else [item.strip() for item in note_types.split(",")],
             metadata_filters=None if metadata is None else _metadata(metadata),
-        )
+        ),
+    )
     typer.echo(
         json.dumps([result.model_dump() for result in results], ensure_ascii=False, default=str)
     )
@@ -221,8 +270,7 @@ def rebuild_index(
     index: Path | None = typer.Option(None),
 ) -> None:
     """Rebuild SQLite from all Markdown files."""
-    with _service(root, index) as service:
-        count = service.rebuild_index()
+    count = _execute(root, index, lambda service: service.rebuild_index())
     typer.echo(f"indexed {count} notes")
 
 
@@ -232,10 +280,13 @@ def watch_index(
     index: Path | None = typer.Option(None),
 ) -> None:
     """Watch Markdown changes and rebuild the local index."""
-    with _service(root, index) as service:
-        service.rebuild_index()
-        typer.echo("watching Markdown document changes; press Ctrl-C to stop")
-        watch_documents(service)
+    async def run_watch() -> None:
+        async with _service(root, index) as service:
+            await service.rebuild_index()
+            typer.echo("watching Markdown document changes; press Ctrl-C to stop")
+            await watch_documents(service)
+
+    asyncio.run(run_watch())
 
 
 def main() -> None:

@@ -54,7 +54,7 @@ CLI/MCP composition roots
 
 - `domain` 不依赖 Typer、FastMCP、文件系统或具体配置实现。
 - `services` 编排文档的读、写、改、删、移动、索引和搜索；需要替换实现或隔离测试时，再为稳定边界引入 Protocol 契约。
-- `repository` 负责 SQLite、FTS5 和向量索引的持久化访问，不负责完整业务流程。
+- `repository` 负责通过 `aiosqlite` 异步访问 SQLite、FTS5 和向量索引，不负责完整业务流程。
 - `indexing` 负责从 Markdown 文档库扫描、增量更新和重建索引。
 - `markdown` 负责 Markdown、Frontmatter 和本地文档库文件操作。
 - `runtime` 只承载运行上下文、文件监听和后台索引生命周期；没有这些需求时不强行扩展它。
@@ -110,6 +110,7 @@ uv run pytest tests/path/to/test_file.py
 - 入口层不承载文档操作规则；CLI 和 MCP 必须复用 services 层。
 - Markdown 文件是文档存储的事实边界；不要在入口层复制一套平行存储模型。
 - SQLite 是可删除、可重建的派生索引，不是文档事实源；索引损坏或过期时必须支持从文档库重建。
+- SQLite 连接由异步生命周期显式初始化和关闭；禁止在 services、CLI 或 MCP 中重新引入同步 `sqlite3` 查询。
 - 关键词搜索使用 SQLite FTS5；语义搜索使用可选的本地 embedding provider 和向量投影，语义依赖不可用时关键词搜索仍必须可用。
 - 跨文档库根目录的路径必须拒绝；敏感信息不得写入文档文件。
 - Markdown 写入成功后才更新 SQLite；索引更新失败不得覆盖或回滚 Markdown，必须保留可重建状态。

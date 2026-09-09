@@ -26,7 +26,7 @@ class NoteService:
         self.store = store
         self.index = index
 
-    def write(
+    async def write(
         self,
         path: str | None,
         content: str,
@@ -51,7 +51,7 @@ class NoteService:
             content = parsed.content
         note = Note(path=NotePath(value=resolved_path), content=content, frontmatter=metadata)
         self.store.write(note, overwrite=overwrite)
-        self.index.upsert(note, updated_at=time.time())
+        await self.index.upsert(note, updated_at=time.time())
         return note
 
     def read(self, identifier: str) -> Note:
@@ -100,7 +100,7 @@ class NoteService:
             raise FileNotFoundError(identifier)
         raise ValueError(f"identifier is ambiguous: {identifier}")
 
-    def update(
+    async def update(
         self,
         path: str,
         *,
@@ -115,10 +115,10 @@ class NoteService:
             }
         )
         self.store.write(note, overwrite=True)
-        self.index.upsert(note, updated_at=time.time())
+        await self.index.upsert(note, updated_at=time.time())
         return note
 
-    def edit(
+    async def edit(
         self,
         identifier: str,
         *,
@@ -136,7 +136,7 @@ class NoteService:
             if operation not in {"append", "prepend"}:
                 raise
             title, directory = self._parse_identifier(identifier)
-            return self.write(
+            return await self.write(
                 None,
                 content,
                 metadata,
@@ -162,20 +162,20 @@ class NoteService:
             }
         )
         self.store.write(updated, overwrite=True)
-        self.index.upsert(updated, updated_at=time.time())
+        await self.index.upsert(updated, updated_at=time.time())
         return updated
 
-    def delete(self, path: str, *, is_directory: bool = False) -> None:
+    async def delete(self, path: str, *, is_directory: bool = False) -> None:
         if is_directory:
             deleted = self.store.delete_directory(path)
             for note_path in deleted:
-                self.index.delete(note_path)
+                await self.index.delete(note_path)
             return
         note_path = self.resolve(path)
         self.store.delete(note_path)
-        self.index.delete(note_path)
+        await self.index.delete(note_path)
 
-    def move(
+    async def move(
         self,
         source: str,
         target: str,
@@ -185,7 +185,7 @@ class NoteService:
     ) -> str:
         if is_directory:
             self.store.move_directory(source, target)
-            self.index.move_prefix(source, target)
+            await self.index.move_prefix(source, target)
             return target
         source_path = self.resolve(source)
         target_path = (
@@ -194,10 +194,10 @@ class NoteService:
             else NotePath(value=target)
         )
         self.store.move(source_path, target_path)
-        self.index.move(source_path, target_path)
+        await self.index.move(source_path, target_path)
         return target_path.value
 
-    def search(
+    async def search(
         self,
         text: str,
         *,
@@ -219,26 +219,26 @@ class NoteService:
             SearchMode,
             {"text": "keyword", "vector": "semantic"}.get(mode, mode),
         )
-        return self.index.search(
+        return await self.index.search(
             SearchQuery(
                 text=" ".join(search_terms),
                 mode=normalized_mode,
                 limit=limit,
                 page=page,
-                tags=tags or [],
+                tags=query_tags,
                 note_types=note_types or [],
                 metadata_filters=metadata_filters or {},
             )
         )
 
-    def rebuild_index(self) -> int:
+    async def rebuild_index(self) -> int:
         notes = self.store.iter_notes()
-        self.index.rebuild(notes, timestamp=time.time())
+        await self.index.rebuild(notes, timestamp=time.time())
         return len(notes)
 
-    def sync_index(self) -> int:
+    async def sync_index(self) -> int:
         """Reconcile the complete index with the current Markdown document set."""
-        return self.rebuild_index()
+        return await self.rebuild_index()
 
     @staticmethod
     def _path_from_title(title: str | None, directory: str) -> str:
@@ -258,13 +258,15 @@ class NoteService:
         return title or directory, directory if title else ""
 
 
-def create_service(
+async def create_service(
     document_root: Path,
     index_path: Path,
     embedding_provider: EmbeddingProvider | None = None,
 ) -> NoteService:
     """Create a local service and its explicitly owned resources."""
+    index = SQLiteIndex(index_path, embedding_provider=embedding_provider)
+    await index.initialize()
     return NoteService(
         MarkdownStore(document_root),
-        SQLiteIndex(index_path, embedding_provider=embedding_provider),
+        index,
     )

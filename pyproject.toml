@@ -19,6 +19,7 @@ dependencies = [
     "mdformat-gfm>=1.0.0",
     "mdformat-frontmatter>=2.1.2",
     "fastembed>=0.8.0",
+    "aiosqlite>=0.22.1",
 ]
 
 [project.optional-dependencies]

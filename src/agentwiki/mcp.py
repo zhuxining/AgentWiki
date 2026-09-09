@@ -1,7 +1,7 @@
 """FastMCP protocol adapter for the shared document services."""
 
-from collections.abc import Iterator
-from contextlib import contextmanager
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import cast
 
 from fastmcp import FastMCP
@@ -14,11 +14,11 @@ from agentwiki.services.notes import NoteService, create_service
 mcp = FastMCP("agentwiki")
 
 
-@contextmanager
-def _service() -> Iterator[NoteService]:
+@asynccontextmanager
+async def _service() -> AsyncIterator[NoteService]:
     settings = Settings.from_env()
     provider = FastEmbedProvider(settings.embedding_model) if settings.embedding_model else None
-    service = create_service(
+    service = await create_service(
         settings.document_root,
         settings.index_path,
         embedding_provider=provider,
@@ -26,11 +26,11 @@ def _service() -> Iterator[NoteService]:
     try:
         yield service
     finally:
-        service.index.close()
+        await service.index.close()
 
 
 @mcp.tool
-def write_note(
+async def write_note(
     title: str,
     content: str,
     directory: str = "",
@@ -45,8 +45,8 @@ def write_note(
     ``path`` is an optional compatibility override; normally ``title`` and
     ``directory`` determine the Markdown filename.
     """
-    with _service() as service:
-        note = service.write(
+    async with _service() as service:
+        note = await service.write(
             path,
             content,
             metadata,
@@ -60,14 +60,14 @@ def write_note(
 
 
 @mcp.tool
-def read_note(
+async def read_note(
     identifier: str,
     include_frontmatter: bool = False,
     start_line: int | None = None,
     end_line: int | None = None,
 ) -> dict[str, object]:
     """Read one Markdown document by path, permalink, or unique title."""
-    with _service() as service:
+    async with _service() as service:
         note, content = service.read_text(
             identifier,
             include_frontmatter=include_frontmatter,
@@ -78,19 +78,19 @@ def read_note(
 
 
 @mcp.tool
-def update_note(
+async def update_note(
     path: str,
     content: str | None = None,
     frontmatter: Frontmatter | None = None,
 ) -> dict[str, object]:
     """Update a Markdown document and refresh its local index row."""
-    with _service() as service:
-        note = service.update(path, content=content, frontmatter=frontmatter)
+    async with _service() as service:
+        note = await service.update(path, content=content, frontmatter=frontmatter)
     return {"path": note.path.value, "title": note.title}
 
 
 @mcp.tool
-def edit_note(
+async def edit_note(
     identifier: str,
     operation: str,
     content: str,
@@ -101,8 +101,8 @@ def edit_note(
     metadata: Frontmatter | None = None,
 ) -> dict[str, object]:
     """Apply an append, prepend, replacement, or section edit to a note."""
-    with _service() as service:
-        note = service.edit(
+    async with _service() as service:
+        note = await service.edit(
             identifier,
             operation=operation,
             content=content,
@@ -116,25 +116,25 @@ def edit_note(
 
 
 @mcp.tool
-def delete_note(identifier: str, is_directory: bool = False) -> dict[str, str]:
+async def delete_note(identifier: str, is_directory: bool = False) -> dict[str, str]:
     """Delete one Markdown document and its local index row."""
-    with _service() as service:
-        service.delete(identifier, is_directory=is_directory)
+    async with _service() as service:
+        await service.delete(identifier, is_directory=is_directory)
     return {"path": identifier, "status": "deleted"}
 
 
 @mcp.tool
-def move_note(
+async def move_note(
     identifier: str,
     destination_path: str = "",
     destination_folder: str | None = None,
     is_directory: bool = False,
 ) -> dict[str, str]:
     """Move one Markdown document within the local document library."""
-    with _service() as service:
+    async with _service() as service:
         if destination_folder is not None and destination_path:
             raise ValueError("destination_path and destination_folder are mutually exclusive")
-        landing = service.move(
+        landing = await service.move(
             identifier,
             destination_folder or destination_path,
             destination_folder=destination_folder is not None,
@@ -144,7 +144,7 @@ def move_note(
 
 
 @mcp.tool
-def search_notes(
+async def search_notes(
     query: str = "",
     mode: str = "keyword",
     search_type: str | None = None,
@@ -155,8 +155,8 @@ def search_notes(
     metadata_filters: Frontmatter | None = None,
 ) -> list[dict[str, object]]:
     """Search indexed documents with keyword, semantic, or hybrid mode."""
-    with _service() as service:
-        results = service.search(
+    async with _service() as service:
+        results = await service.search(
             query,
             mode=cast(SearchMode, search_type or mode),
             limit=limit,
@@ -178,10 +178,10 @@ def search_notes(
 
 
 @mcp.tool
-def rebuild_index() -> dict[str, int]:
+async def rebuild_index() -> dict[str, int]:
     """Rebuild the SQLite index from all Markdown files."""
-    with _service() as service:
-        count = service.rebuild_index()
+    async with _service() as service:
+        count = await service.rebuild_index()
     return {"indexed": count}
 
 

@@ -24,19 +24,24 @@ class FakeEmbeddingProvider:
         return [float(lowered.count("python")), float(lowered.count("sqlite"))]
 
 
+class AlternateEmbeddingProvider(FakeEmbeddingProvider):
+    model_name = "alternate"
+
+
 class FailingIndex:
-    def upsert(self, note: Note, *, updated_at: float) -> None:
+    async def upsert(self, note: Note, *, updated_at: float) -> None:
         raise RuntimeError("index unavailable")
 
 
 @pytest.fixture
-def service(tmp_path):
+async def service(tmp_path):
     index = SQLiteIndex(tmp_path / "index.sqlite3")
+    await index.initialize()
     service = NoteService(MarkdownStore(tmp_path / "documents"), index)
     try:
         yield service
     finally:
-        index.close()
+        await index.close()
 
 
 def test_note_path_rejects_absolute_and_parent_paths() -> None:
@@ -57,57 +62,57 @@ def test_search_query_validates_mode_and_limit() -> None:
         SearchQuery(text="query", limit=101)
 
 
-def test_document_lifecycle_updates_index(service: NoteService) -> None:
-    note = service.write(
+async def test_document_lifecycle_updates_index(service: NoteService) -> None:
+    note = await service.write(
         "notes/today.md",
         "SQLite makes local search fast.",
         {"title": "Today", "tags": ["local", "sqlite"]},
     )
     assert note.title == "Today"
     assert service.read("notes/today.md").content == "SQLite makes local search fast."
-    assert service.search("local")[0].path.value == "notes/today.md"
+    assert (await service.search("local"))[0].path.value == "notes/today.md"
 
-    service.update("notes/today.md", content="Markdown remains the source of truth.")
+    await service.update("notes/today.md", content="Markdown remains the source of truth.")
     assert service.read("notes/today.md").content == "Markdown remains the source of truth."
-    assert service.search("source truth")[0].path.value == "notes/today.md"
+    assert (await service.search("source truth"))[0].path.value == "notes/today.md"
 
-    service.move("notes/today.md", "archive/today.md")
+    await service.move("notes/today.md", "archive/today.md")
     assert service.read("archive/today.md").path.value == "archive/today.md"
-    assert service.search("source truth")[0].path.value == "archive/today.md"
+    assert (await service.search("source truth"))[0].path.value == "archive/today.md"
 
-    service.delete("archive/today.md")
-    assert service.search("source truth") == []
+    await service.delete("archive/today.md")
+    assert await service.search("source truth") == []
 
 
-def test_markdown_remains_source_of_truth_when_index_update_fails(tmp_path) -> None:
+async def test_markdown_remains_source_of_truth_when_index_update_fails(tmp_path) -> None:
     store = MarkdownStore(tmp_path / "documents")
     service = NoteService(store, cast(SQLiteIndex, FailingIndex()))
 
     with pytest.raises(RuntimeError, match="index unavailable"):
-        service.write("kept.md", "Markdown survives index failure")
+        await service.write("kept.md", "Markdown survives index failure")
 
     assert store.read(NotePath(value="kept.md")).content == "Markdown survives index failure"
 
 
-def test_rebuild_index_reconciles_external_markdown_changes(service: NoteService) -> None:
-    service.write("one.md", "alpha document")
+async def test_rebuild_index_reconciles_external_markdown_changes(service: NoteService) -> None:
+    await service.write("one.md", "alpha document")
     service.store.path_for(NotePath(value="two.md")).write_text(
         "---\ntitle: Two\n---\n\nbeta document\n"
     )
 
-    assert service.search("beta") == []
-    assert service.rebuild_index() == 2
-    results = service.search("beta")
+    assert await service.search("beta") == []
+    assert await service.rebuild_index() == 2
+    results = await service.search("beta")
     assert len(results) == 1
     assert results[0].path.value == "two.md"
     assert results[0].frontmatter == {"title": "Two"}
 
 
-def test_rebuild_index_does_not_index_invalid_or_external_symlink_documents(
+async def test_rebuild_index_does_not_index_invalid_or_external_symlink_documents(
     service: NoteService,
     tmp_path,
 ) -> None:
-    service.write("valid.md", "valid document")
+    await service.write("valid.md", "valid document")
     service.store.path_for(NotePath(value="broken.md")).write_text(
         "---\n- frontmatter must be a mapping\n---\n\nbroken document\n"
     )
@@ -119,28 +124,31 @@ def test_rebuild_index_does_not_index_invalid_or_external_symlink_documents(
     except OSError as exc:
         pytest.skip(f"symbolic links are unavailable: {exc}")
 
-    assert service.rebuild_index() == 1
-    assert service.search("valid")[0].path.value == "valid.md"
-    assert service.search("outside") == []
+    assert await service.rebuild_index() == 1
+    assert (await service.search("valid"))[0].path.value == "valid.md"
+    assert await service.search("outside") == []
 
 
-def test_semantic_and_hybrid_search_use_configured_provider(tmp_path) -> None:
+async def test_semantic_and_hybrid_search_use_configured_provider(tmp_path) -> None:
     index = SQLiteIndex(tmp_path / "index.sqlite3", embedding_provider=FakeEmbeddingProvider())
+    await index.initialize()
     service = NoteService(MarkdownStore(tmp_path / "documents"), index)
     try:
-        service.write("python.md", "Python local tooling")
-        service.write("sqlite.md", "SQLite keyword indexing")
+        await service.write("python.md", "Python local tooling")
+        await service.write("sqlite.md", "SQLite keyword indexing")
 
-        semantic = service.search("python", mode="semantic")
+        semantic = await service.search("python", mode="semantic")
         assert semantic[0].path.value == "python.md"
-        hybrid = service.search("python", mode="hybrid")
+        hybrid = await service.search("python", mode="hybrid")
         assert hybrid[0].path.value == "python.md"
     finally:
-        index.close()
+        await index.close()
 
 
-def test_reference_style_identifiers_incremental_edits_and_filters(service: NoteService) -> None:
-    note = service.write(
+async def test_reference_style_identifiers_incremental_edits_and_filters(
+    service: NoteService,
+) -> None:
+    note = await service.write(
         None,
         "intro\n\n## Details\n\nold",
         title="Reference Note",
@@ -151,31 +159,35 @@ def test_reference_style_identifiers_incremental_edits_and_filters(service: Note
     assert note.path.value == "guides/Reference-Note.md"
     assert service.read("Reference Note").path.value == note.path.value
 
-    service.edit("Reference Note", operation="find_replace", content="new", find_text="old")
-    service.edit("Reference Note", operation="append", content="tail")
+    await service.edit("Reference Note", operation="find_replace", content="new", find_text="old")
+    await service.edit("Reference Note", operation="append", content="tail")
     assert "new" in service.read("guides/Reference-Note.md").content
-    assert service.search("", tags=["python"], note_types=["guide"])[0].title == "Reference Note"
+    assert (
+        await service.search("", tags=["python"], note_types=["guide"])
+    )[0].title == "Reference Note"
 
 
-def test_markdown_is_formatted_on_write(service: NoteService) -> None:
-    service.write("format.md", "# Heading\n\n-   item")
+async def test_markdown_is_formatted_on_write(service: NoteService) -> None:
+    await service.write("format.md", "# Heading\n\n-   item")
     assert service.read("format.md").content == "# Heading\n\n- item"
 
 
-def test_edit_append_creates_and_search_supports_reference_modes(service: NoteService) -> None:
-    created = service.edit("new note", operation="append", content="created")
+async def test_edit_append_creates_and_search_supports_reference_modes(
+    service: NoteService,
+) -> None:
+    created = await service.edit("new note", operation="append", content="created")
     assert created.path.value == "new-note.md"
-    service.write("docs/guide.md", "SQLite guide", {"title": "Guide"})
+    await service.write("docs/guide.md", "SQLite guide", {"title": "Guide"})
 
-    assert service.search("Guide", mode="title")[0].path.value == "docs/guide.md"
-    assert service.search("docs/guide", mode="permalink")[0].path.value == "docs/guide.md"
-    assert service.search("tag:local", tags=["local"]) == []
+    assert (await service.search("Guide", mode="title"))[0].path.value == "docs/guide.md"
+    assert (await service.search("docs/guide", mode="permalink"))[0].path.value == "docs/guide.md"
+    assert await service.search("tag:local", tags=["local"]) == []
 
 
-def test_directory_move_updates_index_and_read_ranges(service: NoteService) -> None:
-    service.write("drafts/a.md", "line one\nline two", {"title": "A"})
-    service.move("drafts", "archive", is_directory=True)
-    assert service.search("line two")[0].path.value == "archive/a.md"
+async def test_directory_move_updates_index_and_read_ranges(service: NoteService) -> None:
+    await service.write("drafts/a.md", "line one\nline two", {"title": "A"})
+    await service.move("drafts", "archive", is_directory=True)
+    assert (await service.search("line two"))[0].path.value == "archive/a.md"
     note, content = service.read_text(
         "A", include_frontmatter=True, start_line=1, end_line=3
     )
@@ -183,8 +195,8 @@ def test_directory_move_updates_index_and_read_ranges(service: NoteService) -> N
     assert "title: A" in content
 
 
-def test_write_merges_frontmatter_supplied_inside_content(service: NoteService) -> None:
-    note = service.write(
+async def test_write_merges_frontmatter_supplied_inside_content(service: NoteService) -> None:
+    note = await service.write(
         "embedded.md",
         "---\ntitle: Embedded\ntype: guide\n---\n\n# Body",
         title="Ignored by content",
@@ -195,12 +207,14 @@ def test_write_merges_frontmatter_supplied_inside_content(service: NoteService) 
     assert note.content == "# Body"
 
 
-def test_section_edit_supports_nested_paths_and_duplicate_headers(service: NoteService) -> None:
-    service.write(
+async def test_section_edit_supports_nested_paths_and_duplicate_headers(
+    service: NoteService,
+) -> None:
+    await service.write(
         "sections.md",
         "# Root\n\n## Details\n\nfirst\n\n### Child\n\nkeep\n\n## Details\n\nsecond",
     )
-    service.edit(
+    await service.edit(
         "sections.md",
         operation="replace_section",
         section="Root/Details[1]",
@@ -210,3 +224,44 @@ def test_section_edit_supports_nested_paths_and_duplicate_headers(service: NoteS
     assert "first" in body
     assert "replacement" in body
     assert "second" not in body
+
+
+async def test_sqlite_metadata_filters_support_nested_values_and_comparisons(
+    service: NoteService,
+) -> None:
+    await service.write(
+        "priority.md",
+        "priority document",
+        {"state": "active", "priority": 3, "owner": {"team": "local"}},
+    )
+    assert await service.search("", metadata_filters={"owner.team": "local"})
+    assert await service.search("", metadata_filters={"priority": {"$gte": 3}})
+    assert (
+        await service.search("", metadata_filters={"priority": {"$between": [1, 2]}})
+        == []
+    )
+
+
+async def test_sqlite_invalidates_vectors_when_embedding_model_changes(tmp_path) -> None:
+    db_path = tmp_path / "index.sqlite3"
+    documents = MarkdownStore(tmp_path / "documents")
+    first = SQLiteIndex(db_path, embedding_provider=FakeEmbeddingProvider())
+    await first.initialize()
+    try:
+        await NoteService(documents, first).write("python.md", "Python")
+        cursor = await first.connection.execute("SELECT COUNT(*) FROM document_vectors")
+        row = await cursor.fetchone()
+        assert row is not None
+        assert row[0] == 1
+    finally:
+        await first.close()
+
+    second = SQLiteIndex(db_path, embedding_provider=AlternateEmbeddingProvider())
+    await second.initialize()
+    try:
+        cursor = await second.connection.execute("SELECT COUNT(*) FROM document_vectors")
+        row = await cursor.fetchone()
+        assert row is not None
+        assert row[0] == 0
+    finally:
+        await second.close()

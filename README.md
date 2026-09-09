@@ -13,7 +13,7 @@ AgentWiki 的核心能力是：
 - 移动文档
 - 搜索文档：支持关键词、语义和混合查询
 
-Markdown 正文保存文档内容，YAML Frontmatter 保存类型、状态、范围、项目、标签和来源等可查询元数据。SQLite 保存可重建的搜索索引：关键词索引使用 FTS5，语义索引使用可插拔的本地 embedding provider 和向量投影。
+Markdown 正文保存文档内容，YAML Frontmatter 保存类型、状态、范围、项目、标签和来源等可查询元数据。SQLite 保存可重建的搜索索引：关键词索引使用 FTS5，语义索引使用可插拔的本地 embedding provider 和向量投影；索引同时记录内容哈希与向量来源状态，避免复用过期数据。
 
 ## 架构入口
 
@@ -27,7 +27,7 @@ Agent / Script
 - **CLI**：本地调试、初始化、批处理和自动化脚本。
 - **MCP**：向 Agent 暴露共享文档操作工具。
 - **Services / Domain**：承载文档操作、索引同步和搜索规则。
-- **Repository / Indexing**：访问 SQLite 索引并负责扫描、增量同步和索引重建。
+- **Repository / Indexing**：通过 `aiosqlite` 访问 SQLite 索引，并负责扫描、增量同步和索引重建。
 - **SQLite Index**：保存从 Markdown 文档库派生的文档元数据、全文索引和可选向量索引。
 - **Markdown 文档库**：Markdown 文件及其 YAML Frontmatter 的持久化边界。
 
@@ -54,6 +54,8 @@ CLI 和 MCP 应共享以下应用能力；具体协议参数由各入口适配�
 不实现云端项目、内容审核、知识图谱、schema、Web UI 和非 Markdown 文件工具。
 
 SQLite 索引是派生数据，不是文档事实源。首次使用或索引损坏时可以从 Markdown 文档库扫描重建；语义模型不可用时，关键词搜索仍可独立工作。
+
+服务、CLI 和 MCP 的索引访问链路使用 `asyncio`/`aiosqlite`；Markdown 文件仍由文档存储边界统一写入，SQLite 只保存可删除、可重建的派生投影。
 
 启用本地语义模型：
 
