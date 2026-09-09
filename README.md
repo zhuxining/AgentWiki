@@ -27,6 +27,7 @@ Agent / Script
 
 - **CLI**：本地调试、初始化、批处理和自动化脚本。
 - **MCP**：向 Agent 暴露共享文档操作工具。
+- **MCP Resource**：通过 `wiki://{path*}` 提供只读 Markdown 资源模板；写操作仍使用 MCP tools。
 - **Services / Domain**：承载文档操作、索引同步和搜索规则。
 - **Repository / Indexing**：通过 `aiosqlite` 访问 SQLite 索引，并负责扫描、增量同步和索引重建。
 - **SQLite Index**：保存从 Markdown 文档库派生的文档元数据、全文索引和可选向量索引。
@@ -35,6 +36,7 @@ Agent / Script
 HTTP API、云端同步、Postgres、多用户服务和 Web UI 不属于当前架构范围。
 
 详细设计见 [架构文档](docs/ARCHITECTURE.md)。
+MCP 工具的参数、返回值和调用流程见 [MCP Tools 说明](docs/MCP_TOOLS.md)。
 
 ## 工具能力
 
@@ -79,6 +81,7 @@ uv run agentwiki-mcp
 ```
 
 CLI 和 MCP 当前都已提供上述文档工具；CLI 适合本地脚本与调试，MCP 适合 Agent 调用。
+MCP 会话通过 FastMCP lifespan 复用一个 `NoteService`/aiosqlite 连接，并在重建索引时报告进度。
 
 ## 开发
 

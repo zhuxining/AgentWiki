@@ -77,6 +77,11 @@ Agent / Script
                 Markdown 文档库   Local SQLite index
 ```
 
+MCP 另外注册 `wiki://{path*}` Resource Template 作为只读 Markdown 读取入口。它与
+`read_note` 共用同一套 service 和路径安全规则，不承担写入职责。FastMCP lifespan 在
+MCP 会话级别创建并复用 `NoteService` 及 aiosqlite 连接；Context 只负责运行时注入、
+日志和进度通知，不向 domain 层泄漏协议依赖。
+
 典型流程：
 
 ```text
@@ -155,6 +160,8 @@ runtime ─────────────────→ services
 边界规则：
 
 - `domain` 不导入 Typer、FastMCP、Path 读写实现或具体配置管理器。
+- `mcp` 可以依赖 FastMCP 的 `Context`、lifespan、Resource Template 等协议能力，但这些
+  只停留在 composition root/adapter；文档规则仍由 services/domain 负责。
 - `services` 负责文档用例编排、操作顺序、索引同步和错误转换；当前直接接收 MarkdownStore 和 SQLiteIndex，稳定替换边界形成后再抽取 Protocol 契约。
 - `repository` 通过 `aiosqlite` 实现 SQLite、FTS5 和向量索引访问，不负责完整业务流程；连接初始化、提交和关闭都属于异步生命周期。
 - `indexing` 实现 Markdown 文档扫描、增量同步和索引重建。
@@ -164,6 +171,8 @@ runtime ─────────────────→ services
 - 配置只由 composition root 读取，再显式传递给下游模块；业务模块不得直接读取环境变量。
 
 ## 6. 工具契约
+
+MCP 工具的具体参数、返回值、错误边界和调用示例见 [MCP Tools 说明](MCP_TOOLS.md)。
 
 CLI 和 MCP 应共享以下核心文档能力。协议层可以调整参数命名和返回格式，但不能改变语义：
 

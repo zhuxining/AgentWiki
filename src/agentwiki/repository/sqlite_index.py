@@ -1,6 +1,7 @@
 """Local SQLite FTS5 index derived from Markdown documents."""
 
 import asyncio
+from collections.abc import Awaitable, Callable
 import contextlib
 from hashlib import sha256
 import json
@@ -368,13 +369,19 @@ class SQLiteIndex:
             return await self._hybrid_search(query, keyword_results)
         return self._paginate(keyword_results, query)
 
-    async def rebuild(self, notes: list[Note], *, timestamp: float) -> None:
+    async def rebuild(
+        self,
+        notes: list[Note],
+        *,
+        timestamp: float,
+        progress: Callable[[int, int], Awaitable[None]] | None = None,
+    ) -> None:
         await self.connection.execute("DELETE FROM document_index")
         await self.connection.execute("DELETE FROM document_fts")
         await self.connection.execute("DELETE FROM document_vectors")
         if self._sqlite_vec_loaded and await self._vector_table_exists():
             await self.connection.execute("DELETE FROM document_vectors_vec")
-        for note in notes:
+        for position, note in enumerate(notes, start=1):
             metadata = json.dumps(note.frontmatter, ensure_ascii=False, sort_keys=True)
             await self.connection.execute(
                 """
@@ -399,6 +406,8 @@ class SQLiteIndex:
                 (note.path.value, note.title, note.content, metadata),
             )
             await self._upsert_vector(note)
+            if progress is not None:
+                await progress(position, len(notes))
         await self.connection.commit()
 
     async def sync(self, notes: list[Note], *, timestamp: float) -> None:

@@ -1,6 +1,7 @@
 """Use cases for Markdown documents and their local index."""
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 import re
 import time
@@ -231,9 +232,12 @@ class NoteService:
             )
         )
 
-    async def rebuild_index(self) -> int:
-        notes = self.store.iter_notes()
-        await self.index.rebuild(notes, timestamp=time.time())
+    async def rebuild_index(
+        self,
+        progress: Callable[[int, int], Awaitable[None]] | None = None,
+    ) -> int:
+        notes = await asyncio.to_thread(self.store.iter_notes)
+        await self.index.rebuild(notes, timestamp=time.time(), progress=progress)
         return len(notes)
 
     async def sync_index(self) -> int:
