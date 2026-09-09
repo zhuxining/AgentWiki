@@ -68,7 +68,9 @@ class MarkdownStore:
         for path in sorted(self.root.rglob("*.md")):
             relative = path.relative_to(self.root).as_posix()
             try:
-                notes.append(self._parse(NotePath(relative), path.read_text(encoding="utf-8")))
+                notes.append(
+                    self._parse(NotePath(value=relative), path.read_text(encoding="utf-8"))
+                )
             except UnicodeDecodeError, ValueError, yaml.YAMLError:
                 continue
         return notes

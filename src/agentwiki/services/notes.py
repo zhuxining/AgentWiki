@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 from pathlib import Path
 import time
 
@@ -20,13 +19,13 @@ class NoteService:
         self.index = index
 
     def write(self, path: str, content: str, frontmatter: dict[str, object] | None = None) -> Note:
-        note = Note(NotePath(path), content, dict(frontmatter or {}))
+        note = Note(path=NotePath(value=path), content=content, frontmatter=dict(frontmatter or {}))
         self.store.write(note)
         self.index.upsert(note, updated_at=time.time())
         return note
 
     def read(self, path: str) -> Note:
-        return self.store.read(NotePath(path))
+        return self.store.read(NotePath(value=path))
 
     def update(
         self,
@@ -36,23 +35,24 @@ class NoteService:
         frontmatter: dict[str, object] | None = None,
     ) -> Note:
         current = self.read(path)
-        note = replace(
-            current,
-            content=current.content if content is None else content,
-            frontmatter=current.frontmatter if frontmatter is None else dict(frontmatter),
+        note = current.model_copy(
+            update={
+                "content": current.content if content is None else content,
+                "frontmatter": current.frontmatter if frontmatter is None else dict(frontmatter),
+            }
         )
         self.store.write(note, overwrite=True)
         self.index.upsert(note, updated_at=time.time())
         return note
 
     def delete(self, path: str) -> None:
-        note_path = NotePath(path)
+        note_path = NotePath(value=path)
         self.store.delete(note_path)
         self.index.delete(note_path)
 
     def move(self, source: str, target: str) -> None:
-        source_path = NotePath(source)
-        target_path = NotePath(target)
+        source_path = NotePath(value=source)
+        target_path = NotePath(value=target)
         self.store.move(source_path, target_path)
         self.index.move(source_path, target_path)
 

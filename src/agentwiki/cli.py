@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import asdict
 import json
 from pathlib import Path
 from typing import Any, cast
@@ -128,7 +127,9 @@ def search_notes(
     """Search indexed Markdown documents."""
     with _service(root, index) as service:
         results = service.search(text, mode=cast(SearchMode, mode), limit=limit)
-    typer.echo(json.dumps([asdict(result) for result in results], ensure_ascii=False, default=str))
+    typer.echo(
+        json.dumps([result.model_dump() for result in results], ensure_ascii=False, default=str)
+    )
 
 
 @app.command("rebuild-index")

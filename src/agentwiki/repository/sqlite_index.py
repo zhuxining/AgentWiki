@@ -370,7 +370,7 @@ class SQLiteIndex:
     @staticmethod
     def _result(row: sqlite3.Row, *, score: float, snippet: str) -> SearchResult:
         return SearchResult(
-            path=NotePath(row["path"]),
+            path=NotePath(value=row["path"]),
             title=row["title"],
             score=score,
             frontmatter=json.loads(row["frontmatter_json"]),

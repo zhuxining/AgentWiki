@@ -23,12 +23,12 @@ HTTP API、云端同步和 Web UI 不属于当前架构承诺。
 
 ## 目录结构
 
-目标目录按领域和依赖方向组织；目录尚未实现的部分应随对应功能落地，不要提前创建空壳模块。
+当前实现按领域和依赖方向组织。未实现的目录或模块应随对应功能落地，不要提前创建空壳模块。
 
 ```text
 src/agentwiki/
-├── cli/                 # CLI composition root 与命令适配
-├── mcp/                 # MCP server、工具与资源适配
+├── cli.py               # CLI composition root 与命令适配
+├── mcp.py               # MCP server、工具与资源适配
 ├── domain/              # 领域模型、值对象、规则和领域错误
 ├── services/            # 文档操作、搜索和索引同步的业务流程
 ├── repository/          # SQLite、FTS5 和向量索引访问
@@ -38,14 +38,14 @@ src/agentwiki/
 └── runtime/             # 文件监听、运行上下文和后台索引生命周期
 ```
 
-依赖方向必须保持为：
+当前依赖方向必须保持为：
 
 ```text
 CLI/MCP composition roots
             ↓
         services
             ↓
-     domain + contracts
+        domain
             ↓
  repository / indexing
             ↓
@@ -53,7 +53,7 @@ CLI/MCP composition roots
 ```
 
 - `domain` 不依赖 Typer、FastMCP、文件系统或具体配置实现。
-- `services` 通过 repository 和 indexing 契约编排文档的读、写、改、删、移动、索引和搜索。
+- `services` 编排文档的读、写、改、删、移动、索引和搜索；需要替换实现或隔离测试时，再为稳定边界引入 Protocol 契约。
 - `repository` 负责 SQLite、FTS5 和向量索引的持久化访问，不负责完整业务流程。
 - `indexing` 负责从 Markdown 文档库扫描、增量更新和重建索引。
 - `markdown` 负责 Markdown、Frontmatter 和本地文档库文件操作。
@@ -91,9 +91,6 @@ uv run pytest tests/path/to/test_file.py
 ```
 
 提交前必须执行 `uv run ruff check`、`uv run ty check`、`uv run pytest` 和 `git diff --check`。
-
-
-
 ## 工程规范
 
 ### 工具链与依赖
@@ -102,6 +99,7 @@ uv run pytest tests/path/to/test_file.py
 - 新增依赖前先检查现有依赖是否已提供等价能力，避免引入同类替代品。
 - 运行脚本优先使用 `uv run`，不要绕过项目环境直接调用全局 Python 包。
 - 修改 `pyproject.toml` 后同步检查 `uv.lock` 是否需要更新。
+- 配置模型使用 `pydantic-settings` 从环境变量读取并校验；不要在业务模块中直接读取环境变量。
 
 ### 需求与架构
 
@@ -112,10 +110,12 @@ uv run pytest tests/path/to/test_file.py
 - SQLite 是可删除、可重建的派生索引，不是文档事实源；索引损坏或过期时必须支持从文档库重建。
 - 关键词搜索使用 SQLite FTS5；语义搜索使用可选的本地 embedding provider 和向量投影，语义依赖不可用时关键词搜索仍必须可用。
 - 跨文档库根目录的路径必须拒绝；敏感信息不得写入文档文件。
+- Markdown 写入成功后才更新 SQLite；索引更新失败不得覆盖或回滚 Markdown，必须保留可重建状态。
+- 索引扫描遇到单个文档的 Markdown/YAML 解析错误时，不得静默丢弃；至少记录相对路径和错误原因，并继续处理其他文档。
 
 ### 测试
 
-- 测试目录镜像源码领域结构，优先为领域规则、服务流程、仓储和索引边界编写精确测试。
+- 测试目录尽量镜像源码领域结构，优先为领域规则、服务流程、仓储和索引边界编写精确测试。
 - 涉及外部服务或真实文件系统的测试使用 `integration` marker；纯单元测试保持快速、确定。
 - Bug 修复必须先有最小失败测试，再修复根因并执行相关回归测试。
 - 测试验证行为契约，不依赖特定操作系统的文件事件顺序。
@@ -123,8 +123,9 @@ uv run pytest tests/path/to/test_file.py
 ### 代码质量
 
 - 保持模块和函数单一职责，避免把配置、协议适配、业务编排和文件读写混在一起。
-- 使用当前版本推荐的 Python、Typer、Pydantic 和 FastMCP API，禁止引入已废弃用法。
-- 保持类型标注完整；不要用无约束的 `Any` 掩盖跨层接口设计问题。
+- 使用当前版本推荐的 Python3.14、Typer、Pydantic V2 和 FastMCP，禁止引入已废弃用法。
+- 项目源码中的公开函数、业务函数和边界适配函数必须完整标注参数与返回值；测试 fixture、第三方回调和框架要求的特殊函数可保留合理例外。
+- 不要用无约束的 `Any` 掩盖跨层接口设计问题；类型确实未知时，优先使用 `object`、Protocol 或具体的 TypeAlias。
 - AI 生成的代码同样必须遵守本文件和项目架构文档。
 
 ### Git 与提交
@@ -140,21 +141,19 @@ Commit 遵循 Conventional Commits：`feat`、`fix`、`refactor`、`docs`、`tes
 
 ### 类型注解
 
-- 所有函数的参数和返回值必须有类型注解
 - 使用 `X | Y` 代替 `Union[X, Y]`，使用 `X | None` 代替 `Optional[X]`
 - 使用 `list[T]`、`dict[K, V]`、`tuple[T, ...]` 而非 `List`、`Dict`、`Tuple`
-- 避免使用 `Any`；如类型确实未知，优先使用 `object` 或 `Unknown`
 - 对于复杂类型，使用 `TypeAlias` 或 `type` 语句定义别名（Python 3.12+）
 - Python 3.14 中注解默认懒求值，无需 `from __future__ import annotations`
 
 
 ### 现代 Python 语法
 
-- 使用 `match` 语句替代复杂的 `if/elif` 链（Python 3.10+）
-- 使用 `dataclass`（或 `@dataclass(slots=True, frozen=True)`）定义数据结构
+- 根据可读性选择 `match`、`if/elif` 和其他控制流表达方式
+- 使用 Pydantic `BaseModel` 定义需要校验、转换或序列化的数据结构
 - 优先使用 `pathlib.Path` 而非 `os.path`
 - 使用 f-string 进行字符串格式化；在 Python 3.14 中可用 t-string（PEP 750）进行安全模板化
-- 使用海象运算符 `:=` 避免重复计算（谨慎使用，保持可读性）
+- 仅在能明显提升可读性并避免重复计算时使用海象运算符 `:=`
 - 用 `enumerate()` 替代手动索引，用 `zip()` 并行迭代
 
 
@@ -162,7 +161,7 @@ Commit 遵循 Conventional Commits：`feat`、`fix`、`refactor`、`docs`、`tes
 
 - 对不会修改的集合使用 `tuple` 而非 `list`
 - 用 `Final` 标注模块级常量
-- 用 `@dataclass(frozen=True)` 或 `NamedTuple` 定义不可变数据结构
+- 对领域值对象和结果模型使用 Pydantic 的 `frozen` 配置；对简单的内部常量可使用 `NamedTuple`
 - 避免全局可变状态
 
 ### 异常处理
@@ -176,10 +175,10 @@ Commit 遵循 Conventional Commits：`feat`、`fix`、`refactor`、`docs`、`tes
 ### 函数与模块设计
 
 - 保持函数职责单一，认知复杂度低
-- 使用关键字参数提升调用处可读性（`def func(*, key: str)`）
-- 用 `__all__` 明确声明公开 API
+- 对可选参数较多或语义容易混淆的函数，使用关键字参数提升调用处可读性（`def func(*, key: str)`）
+- 对外部使用的模块或包，按需要用 `__all__` 明确声明公开 API
 - 避免在模块顶层执行有副作用的代码
-- 优先使用纯函数（无副作用），将 I/O 推到边界层
+- 优先使用纯函数；将 I/O 限制在明确的适配器、仓储和运行时边界
 
 ### 异步代码
 
@@ -193,14 +192,13 @@ Commit 遵循 Conventional Commits：`feat`、`fix`、`refactor`、`docs`、`tes
 - 不要用 `eval()` 或 `exec()` 执行动态代码
 - 使用参数化查询，避免 SQL 字符串拼接
 - 不要将密钥、密码硬编码在源码中，使用环境变量或 secrets 管理
-- 对用户输入进行验证和清理（推荐 `pydantic`）
+- 对用户输入进行验证和清理；结构化输入和配置优先使用 `pydantic` 与 `pydantic-settings`
 - 使用 `secrets` 模块生成安全随机数，而非 `random`
 
 ### 性能
 
 - 优先使用生成器表达式而非列表推导式（当不需要随机访问时）
 - 避免在循环内进行重复的属性查找，提前绑定到局部变量
-- 用 `__slots__` 减少实例内存占用（或 `@dataclass(slots=True)`）
+- 对 Pydantic 模型使用其默认的 slots 优化；其他高频、轻量对象再考虑 `__slots__`
 - 使用 `collections.deque` 代替列表实现队列
 - 避免频繁的小字符串拼接，用 `"".join(parts)` 或 f-string
-

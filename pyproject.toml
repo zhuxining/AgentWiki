@@ -13,13 +13,11 @@ dependencies = [
     "pydantic-settings>=2.15.0",
     "loguru>=0.7.3",
     "fastmcp >=4.0.3",
-    "mcp[cli]>=2.2.0",
     "watchfiles>=1.2.0",
     "sqlite-vec>=0.1.9",
-    "dformat>=0.1.2",
+    "mdformat>=0.1.2",
     "mdformat-gfm>=1.0.0",
     "mdformat-frontmatter>=2.1.2",
-    "unidecode>=1.4.0",
 ]
 
 [project.optional-dependencies]

@@ -37,11 +37,11 @@ def service(tmp_path):
 
 def test_note_path_rejects_absolute_and_parent_paths() -> None:
     with pytest.raises(ValueError):
-        NotePath("/outside.md")
+        NotePath(value="/outside.md")
     with pytest.raises(ValueError):
-        NotePath("../outside.md")
+        NotePath(value="../outside.md")
     with pytest.raises(ValueError):
-        NotePath("notes/today.txt")
+        NotePath(value="notes/today.txt")
 
 
 def test_document_lifecycle_updates_index(service: NoteService) -> None:
@@ -68,7 +68,9 @@ def test_document_lifecycle_updates_index(service: NoteService) -> None:
 
 def test_rebuild_index_reconciles_external_markdown_changes(service: NoteService) -> None:
     service.write("one.md", "alpha document")
-    service.store.path_for(NotePath("two.md")).write_text("---\ntitle: Two\n---\n\nbeta document\n")
+    service.store.path_for(NotePath(value="two.md")).write_text(
+        "---\ntitle: Two\n---\n\nbeta document\n"
+    )
 
     assert service.search("beta") == []
     assert service.rebuild_index() == 2
