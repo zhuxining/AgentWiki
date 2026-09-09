@@ -7,6 +7,7 @@ name = "agentwiki"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "fastembed" },
     { name = "fastmcp" },
     { name = "loguru" },
     { name = "mdformat" },
@@ -35,6 +36,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "fastembed", specifier = ">=0.8.0" },
     { name = "fastembed", marker = "extra == 'semantic'", specifier = ">=0.7.4" },
     { name = "fastmcp", specifier = ">=4.0.3" },
     { name = "loguru", specifier = ">=0.7.3" },
