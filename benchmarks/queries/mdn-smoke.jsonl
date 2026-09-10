@@ -1,0 +1,6 @@
+{"id":"mdn-array-001","query":"JavaScript Array methods","category":"keyword","difficulty":"easy","relevance":[{"path":"web/javascript/reference/global_objects/array/index.md","grade":3}]}
+{"id":"mdn-http-001","query":"HTTP protocol request response","category":"keyword","difficulty":"easy","relevance":[{"path":"web/http/index.md","grade":3}]}
+{"id":"mdn-css-001","query":"CSS cascading style sheets","category":"exact","difficulty":"easy","relevance":[{"path":"web/css/index.md","grade":3}]}
+{"id":"mdn-promise-001","query":"JavaScript Promise asynchronous operations","category":"semantic","difficulty":"medium","relevance":[{"path":"web/javascript/reference/global_objects/promise/index.md","grade":3}]}
+{"id":"mdn-scoped-array-001","query":"Array","scope":"web/javascript/reference/global_objects","category":"filter","difficulty":"medium","relevance":[{"path":"web/javascript/reference/global_objects/array/index.md","grade":3}]}
+{"id":"mdn-no-answer-001","query":"zxqv-unicorn-term-that-does-not-exist","category":"no_answer","difficulty":"easy","expected_no_answer":true,"relevance":[]}

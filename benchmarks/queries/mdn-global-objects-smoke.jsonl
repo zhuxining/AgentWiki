@@ -1,0 +1,4 @@
+{"id":"mdn-array-global-001","query":"Array","category":"exact","difficulty":"easy","relevance":[{"path":"array/index.md","grade":3}]}
+{"id":"mdn-promise-global-001","query":"Promise","category":"semantic","difficulty":"medium","relevance":[{"path":"promise/index.md","grade":3}]}
+{"id":"mdn-map-global-001","query":"Map key value collection","category":"semantic","difficulty":"medium","relevance":[{"path":"map/index.md","grade":3}]}
+{"id":"mdn-no-answer-global-001","query":"zxqv-unicorn-term-that-does-not-exist","category":"no_answer","difficulty":"easy","expected_no_answer":true,"relevance":[]}

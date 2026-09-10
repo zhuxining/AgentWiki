@@ -9,11 +9,11 @@ AgentWiki 重点解决 Agent 原生文件工具不擅长的“从未知到已知
 
 ## MCP 能力
 
-| 能力 | 作用 |
-| --- | --- |
+| 能力               | 作用                                                     |
+| ------------------ | -------------------------------------------------------- |
 | `get_wiki_context` | 自动组合精确、关键词、语义和近期检索，为当前任务组装证据 |
-| `get_wiki_rules` | 获取目标目录或文档适用的组织与 Frontmatter 规则 |
-| `validate_wiki` | 在原生文件修改后检查格式、结构、Frontmatter 和内部链接 |
+| `get_wiki_rules`   | 获取目标目录或文档适用的组织与 Frontmatter 规则          |
+| `validate_wiki`    | 在原生文件修改后检查格式、结构、Frontmatter 和内部链接   |
 
 `get_wiki_context` 不要求 Agent 选择搜索模式。配置 embedding 时自动执行片段级混合检索；
 不可用时保留关键词和近期查询并明确报告降级。空查询返回最近修改文档，带近期意图的主题
@@ -55,4 +55,5 @@ uv run agentwiki-mcp
 
 详细设计见 [架构文档](docs/ARCHITECTURE.md)，协议见
 [MCP 能力说明](docs/MCP_TOOLS.md)，规则字段见
-[Wiki Rules 配置参考](docs/RULES.md)。
+[Wiki Rules 配置参考](docs/RULES.md)。真实 Wiki 基准测试见
+[benchmarks/README.md](benchmarks/README.md)。
