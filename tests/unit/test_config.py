@@ -1,7 +1,42 @@
 import json
 from pathlib import Path
 
-from agentwiki.config import DEFAULT_EMBEDDING_MODEL, Settings
+from agentwiki.config import DEFAULT_EMBEDDING_MODEL, DEFAULT_MIN_SIMILARITY, Settings
+from agentwiki.domain.retrieval import ContextQuery
+from agentwiki.repository.embeddings import FastEmbedProvider
+
+
+def test_embedding_default_matches_the_adapter_default() -> None:
+    """`config` and `repository/embeddings` cannot import each other.
+
+    The layering rules forbid the adapter from reading the config use case, so the default
+    model name is declared in both places. Without this guard the two would silently drift
+    and `FastEmbedProvider()` would load a different model than the config advertises.
+    """
+    assert FastEmbedProvider.DEFAULT_MODEL == DEFAULT_EMBEDDING_MODEL
+
+
+def test_context_query_default_threshold_matches_the_configured_threshold() -> None:
+    """A directly built `ContextQuery` must run at the configured threshold.
+
+    The benchmark runner, the attribution tool and the tests all build `ContextQuery`
+    without passing `min_similarity`. When `ContextQuery` carried its own literal default
+    the two drifted, so those callers silently measured a different threshold than the CLI
+    and MCP entry points.
+    """
+    assert ContextQuery().min_similarity == Settings().min_similarity == DEFAULT_MIN_SIMILARITY
+
+
+def test_default_threshold_sits_between_the_calibration_bounds() -> None:
+    """The default must reject unrelated queries while keeping true paraphrases.
+
+    Both numbers come from the calibration recorded in `domain/retrieval.py`; this test
+    exists so a future model swap cannot quietly ship a threshold that no longer separates
+    them. The window is narrow, so both bounds are asserted exactly.
+    """
+    unrelated_peak = 0.4281
+    weakest_paraphrase = 0.4470
+    assert unrelated_peak < DEFAULT_MIN_SIMILARITY <= weakest_paraphrase
 
 
 def test_settings_loads_json_and_resolves_paths_from_project_root(tmp_path) -> None:

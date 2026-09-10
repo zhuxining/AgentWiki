@@ -40,7 +40,10 @@ class FastEmbedProvider:
     queries and can be turned into a cosine similarity.
     """
 
-    DEFAULT_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+    # Kept in sync with `agentwiki.config.DEFAULT_EMBEDDING_MODEL` by hand: this adapter
+    # layer is not allowed to import the config layer (enforced by tests/unit/test_layering.py),
+    # so `test_embedding_default_matches_config` guards the pair instead.
+    DEFAULT_MODEL = "BAAI/bge-small-zh-v1.5"
 
     def __init__(self, model_name: str = DEFAULT_MODEL) -> None:
         self._model_name = model_name

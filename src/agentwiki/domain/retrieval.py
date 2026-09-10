@@ -11,6 +11,23 @@ from agentwiki.domain.tags import TagAliases
 RetrievalStrategy = Literal["recent", "keyword", "hybrid", "recent_hybrid"]
 MatchSource = Literal["exact", "keyword", "semantic", "graph", "recency"]
 
+# Minimum cosine similarity for a semantic hit to count. This constant lives in the domain
+# layer because `ContextQuery` carries it as a field default, and it must be the *same*
+# default the config layer exposes: a caller that builds a `ContextQuery` directly (benchmarks,
+# tests, embedding consumers) has to see the behaviour the CLI and MCP entry points produce.
+# A second hard-coded default here once drifted from the configured one, which meant the
+# benchmark measured a different threshold than the product actually used.
+#
+# Calibrated against `BAAI/bge-small-zh-v1.5` on the four short documents in
+# tests/unit/test_semantic_retrieval.py, embedding text in the exact form the indexer stores
+# it (`title\ntags\nsection\ncontent`): the weakest true paraphrase scored 0.4470 while the
+# highest genuinely unrelated query peaked at 0.4281. That window is narrow (~0.02) compared
+# with the ~0.20 the previous multilingual model gave, so this value is correspondingly
+# fragile - re-measure before changing the embedding model. A topically *adjacent* query
+# ("如何用 Kubernetes 部署微服务" against a release runbook) reached 0.4965, above the
+# weakest true paraphrase: no single threshold separates adjacency from relevance.
+DEFAULT_MIN_SIMILARITY = 0.44
+
 
 class ContextQuery(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -22,7 +39,7 @@ class ContextQuery(BaseModel):
     note_types: tuple[str, ...] = ()
     metadata_filters: Frontmatter = Field(default_factory=dict)
     tag_aliases: TagAliases = Field(default_factory=dict)
-    min_similarity: float = Field(default=0.30, ge=0.0, le=1.0)
+    min_similarity: float = Field(default=DEFAULT_MIN_SIMILARITY, ge=0.0, le=1.0)
 
 
 class SearchCandidate(BaseModel):

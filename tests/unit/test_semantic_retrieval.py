@@ -1,8 +1,12 @@
-"""Semantic retrieval with the default multilingual model.
+"""Semantic retrieval with the default Chinese embedding model.
 
 These tests load the real model (cached after the first run) because the bugs they guard
 against - a wrong similarity sign, a rank key that was never projected, and a threshold
 calibrated for a different model - are all invisible to fake-vector tests.
+
+They are also the calibration corpus for `DEFAULT_MIN_SIMILARITY`: the four paraphrases
+below must score above the threshold and `UNRELATED` below it. Changing the model or the
+threshold means re-running this file and updating the numbers recorded in `config.py`.
 """
 
 import pytest

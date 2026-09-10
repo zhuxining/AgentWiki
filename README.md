@@ -45,21 +45,35 @@ uv run agentwiki-mcp
 {
   "document_root": "~/AgentWiki",
   "index_path": "~/.agentwiki/agentwiki.sqlite3",
-  "embedding_model": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
-  "min_similarity": 0.3
+  "embedding_model": "BAAI/bge-small-zh-v1.5",
+  "min_similarity": 0.44
 }
 ```
 
 进程环境变量不会覆盖该文件。默认文档根目录是 `~/AgentWiki`。
 
-`embedding_model` 默认是一个**多语言**模型（约 220 MB，首次使用会下载）：检索层面对的查询
-经常中英混排，而 fastembed 的英文模型无法嵌入中文。若 Wiki 以中文为主，可换成
-`BAAI/bge-small-zh-v1.5`（512 维，中文更强、英文较弱）；设为 `null` 则完全禁用语义检索，
-关键词检索始终可用。
+`embedding_model` 默认是 `BAAI/bge-small-zh-v1.5`（512 维，约 90 MB，首次使用会下载）：它
+面向中文检索，中文改写的召回与旧的多语言模型持平，且模型体积更小。代价是**英文**——英文
+查询对中文文档的相似度会明显抬高，弃答因此更依赖阈值。若 Wiki 的查询经常中英混排，可以换回
+`sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`（384 维，约 220 MB）；设为
+`null` 则完全禁用语义检索，关键词检索始终可用。
 
-`min_similarity` 是语义命中的余弦下限。它**与模型绑定**：默认值 0.30 是在默认多语言模型上
-用中文语料标定的（真实改写命中 0.34–0.58，无关查询峰值 0.10）。更换模型后应重新标定，
-否则会静默地全部命中或全部拒绝。
+`min_similarity` 是语义命中的余弦下限，它**与模型绑定**：默认值 0.44 是在上述中文模型上用
+`tests/unit/test_semantic_retrieval.py` 的语料标定的（最弱真实改写 0.4470，真正无关的查询
+峰值 0.4281）。这个可用窗口**只有约 0.02**，远窄于旧多语言模型的约 0.20（改写 0.34–0.58 /
+无关 0.10），所以阈值更脆弱：更换模型后必须重新标定，否则会静默地全部命中或全部拒绝。
+
+标定必须用**索引实际嵌入的文本格式**（`title\ntags\nsection\ncontent`），而不是 Markdown
+原文——两者算出的相似度相差约 0.01–0.02，在这个窗口宽度下足以得出相反结论。
+
+还有一类查询是单阈值**分不开**的：主题相邻但并非所需。例如「如何用 Kubernetes 部署微服务」
+对一篇发布手册打 0.4965，高于最弱真实改写。纯中文 embedding 加单阈值无法区分"相邻"与
+"相关"，这类假阳性需要调用方结合 `match_sources`、`scope` 或读取原文来收敛。
+
+该阈值只有一处定义（`domain/retrieval.py` 的 `DEFAULT_MIN_SIMILARITY`），配置层直接复用，
+因为 `ContextQuery` 把它作为字段默认值：**直接构造查询的调用方（基准、测试）必须和 CLI /
+MCP 入口跑同一个阈值**。此前两处各有一个默认值并发生漂移，导致基准测的阈值和产品实际
+使用的不是同一个。
 
 首次启动若索引 schema 变更，会删除并重建派生索引（Markdown 不受影响）；重建会在日志中
 说明开始与原因，若上次重建中断则下次启动会报告。
