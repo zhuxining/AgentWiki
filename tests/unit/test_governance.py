@@ -86,7 +86,7 @@ def test_filename_pattern_returns_validation_error(tmp_path) -> None:
     assert "path.filename" in {issue.code for issue in report.errors}
 
 
-def test_base_and_scoped_required_fields_are_additive(tmp_path) -> None:
+def test_configured_and_scoped_required_fields_are_additive(tmp_path) -> None:
     library = MarkdownLibrary(tmp_path / "documents")
     reserved = library.root / "agentwiki"
     reserved.mkdir()
@@ -98,15 +98,7 @@ def test_base_and_scoped_required_fields_are_additive(tmp_path) -> None:
 
     rules = GovernanceService(library).get_wiki_rules("decisions/one.md")
 
-    assert rules.required_fields == (
-        "title",
-        "type",
-        "tags",
-        "created_at",
-        "updated_at",
-        "owner",
-        "decided_at",
-    )
+    assert rules.required_fields == ("owner", "decided_at")
 
 
 def test_tag_aliases_warn_and_new_tags_remain_allowed(tmp_path) -> None:

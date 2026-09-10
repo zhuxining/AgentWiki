@@ -56,7 +56,7 @@ metadata_filters: object | null
 
 参数 `scope: str = ""`。返回根规则与匹配目录规则合并后的 `WikiRules`，包括默认类型、
 `required_fields`、可选 `tag_aliases`、动态 `known_tags`、目录规则和 guide 内容。标题、类型、
-tags、创建时间、修改时间始终必填。新标签允许使用但会被标记为 warning；别名、大小写变体和
+必填字段由 `AGENTWIKI.md` 中的 `required_fields` 配置决定。新标签允许使用但会被标记为 warning；别名、大小写变体和
 层级标签会按规范标签归一。
 
 新建、移动或首次修改陌生范围前调用；同一范围的连续编辑可复用结果。

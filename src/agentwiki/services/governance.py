@@ -10,7 +10,6 @@ import yaml
 
 from agentwiki.domain.documents import DocumentDescriptor, DocumentPath, WikiDocument
 from agentwiki.domain.governance import (
-    BASE_REQUIRED_FIELDS,
     KnownTag,
     ValidationIssue,
     ValidationReport,
@@ -43,7 +42,7 @@ class GovernanceService:
         known_tags: tuple[KnownTag, ...],
     ) -> WikiRules:
         matching = tuple(rule for rule in rules.sections if self._matches(rule.path, scope))
-        required_fields = list(dict.fromkeys((*BASE_REQUIRED_FIELDS, *rules.required_fields)))
+        required_fields = list(dict.fromkeys(rules.required_fields))
         kind = rules.default_type
         for rule in sorted(matching, key=lambda item: len(item.path)):
             required_fields.extend(
@@ -61,17 +60,17 @@ class GovernanceService:
 
     def validate_wiki(self, path: str | None = None, *, full: bool = False) -> ValidationReport:
         descriptors = self.library.descriptors()
-        selected = descriptors if full or path is None else tuple(
-            descriptor for descriptor in descriptors if descriptor.path.value == path
+        selected = (
+            descriptors
+            if full or path is None
+            else tuple(descriptor for descriptor in descriptors if descriptor.path.value == path)
         )
         if path is not None and not selected:
             selected = (self._descriptor_for(path),)
         documents, failures = self._read_documents_with_failures(selected)
         base_rules = self._load_rules()
         catalog_documents = (
-            documents
-            if selected == descriptors
-            else self._read_documents(descriptors)
+            documents if selected == descriptors else self._read_documents(descriptors)
         )
         known_tags = self._known_tags(catalog_documents, base_rules)
         known_tag_counts = {item.tag: item.count for item in known_tags}
@@ -99,9 +98,7 @@ class GovernanceService:
             checked_paths=tuple(document.path.value for document in documents),
         )
 
-    def _read_documents(
-        self, descriptors: tuple[DocumentDescriptor, ...]
-    ) -> list[WikiDocument]:
+    def _read_documents(self, descriptors: tuple[DocumentDescriptor, ...]) -> list[WikiDocument]:
         return self._read_documents_with_failures(descriptors)[0]
 
     def _read_documents_with_failures(
@@ -124,9 +121,7 @@ class GovernanceService:
         return documents, failures
 
     @staticmethod
-    def _known_tags(
-        documents: list[WikiDocument], rules: WikiRules
-    ) -> tuple[KnownTag, ...]:
+    def _known_tags(documents: list[WikiDocument], rules: WikiRules) -> tuple[KnownTag, ...]:
         counts: dict[str, int] = dict.fromkeys(rules.tag_aliases, 0)
         spellings: dict[str, set[str]] = {}
         for document in documents:
@@ -151,13 +146,21 @@ class GovernanceService:
 
     def _load_rules(self) -> WikiRules:
         data: dict[str, Any] = {}
-        rules_text = self.library.reserved_text("context.yaml")
+        rules_text = self.library.reserved_text("AGENTWIKI.md")
+        guide = ""
         if rules_text:
-            parsed = yaml.safe_load(rules_text) or {}
-            if not isinstance(parsed, dict):
-                raise ValueError("agentwiki/context.yaml must be a YAML mapping")
-            data = parsed
-        guide = self.library.reserved_text("guide.md")
+            guide, frontmatter = self.library.parse(rules_text)
+            data = frontmatter or {}
+            if not isinstance(data, dict):
+                raise ValueError("AGENTWIKI.md frontmatter must be a YAML mapping")
+        else:
+            legacy_rules = self.library.reserved_text("context.yaml")
+            if legacy_rules:
+                parsed = yaml.safe_load(legacy_rules) or {}
+                if not isinstance(parsed, dict):
+                    raise ValueError("agentwiki/context.yaml must be a YAML mapping")
+                data = parsed
+                guide = self.library.reserved_text("guide.md")
         return WikiRules.model_validate({**data, "guide_content": guide})
 
     def _descriptor_for(self, path: str) -> DocumentDescriptor:
@@ -193,9 +196,7 @@ class GovernanceService:
                         code="path.filename",
                         severity="error",
                         path=document.path.value,
-                        message=(
-                            f"文件名不符合目录规则 {rule.filename_pattern!r}"
-                        ),
+                        message=f"文件名不符合目录规则 {rule.filename_pattern!r}",
                     )
                 )
         for field in rules.required_fields:
@@ -251,9 +252,7 @@ class GovernanceService:
                         message=f"建议使用规范标签: {', '.join(non_canonical)}",
                     )
                 )
-            duplicates = sorted(
-                tag for tag, count in Counter(canonical_tags).items() if count > 1
-            )
+            duplicates = sorted(tag for tag, count in Counter(canonical_tags).items() if count > 1)
             if duplicates:
                 result.append(
                     ValidationIssue(
@@ -265,13 +264,11 @@ class GovernanceService:
                     )
                 )
             configured = set(rules.tag_aliases)
-            new_tags = sorted(
-                {
-                    tag
-                    for tag in canonical_tags
-                    if tag not in configured and known_tag_counts.get(tag, 0) <= 1
-                }
-            )
+            new_tags = sorted({
+                tag
+                for tag in canonical_tags
+                if tag not in configured and known_tag_counts.get(tag, 0) <= 1
+            })
             if new_tags:
                 result.append(
                     ValidationIssue(

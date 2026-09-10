@@ -1,19 +1,12 @@
 """Domain models for Wiki context and validation."""
 
-from typing import Final, Literal
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from agentwiki.domain.tags import TagAliases, alias_lookup, is_valid_tag
 
 Severity = Literal["error", "warning", "info"]
-BASE_REQUIRED_FIELDS: Final[tuple[str, ...]] = (
-    "title",
-    "type",
-    "tags",
-    "created_at",
-    "updated_at",
-)
 
 
 class WikiSectionRule(BaseModel):
@@ -41,7 +34,7 @@ class WikiRules(BaseModel):
     name: str = "AgentWiki"
     purpose: str = ""
     default_type: str = "note"
-    required_fields: tuple[str, ...] = BASE_REQUIRED_FIELDS
+    required_fields: tuple[str, ...] = ()
     tag_aliases: TagAliases = Field(default_factory=dict)
     sections: tuple[WikiSectionRule, ...] = ()
     guide_content: str = ""

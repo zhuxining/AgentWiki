@@ -6,6 +6,7 @@ from agentwiki.domain.documents import (
     DocumentDescriptor,
     DocumentFingerprint,
     DocumentPath,
+    Frontmatter,
     SyncReport,
     WikiDocument,
 )
@@ -64,3 +65,5 @@ class WikiLibrary(Protocol):
     def raw(self, document_path: DocumentPath) -> str: ...
 
     def reserved_text(self, name: str) -> str: ...
+
+    def parse(self, raw: str) -> tuple[str, Frontmatter]: ...
