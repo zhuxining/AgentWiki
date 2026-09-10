@@ -20,6 +20,7 @@ async def test_mcp_exposes_retrieval_rules_and_validation(tmp_path, monkeypatch)
         ),
         encoding="utf-8",
     )
+    monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.chdir(tmp_path)
     async with Client(mcp) as client:
         tools = await client.list_tools()

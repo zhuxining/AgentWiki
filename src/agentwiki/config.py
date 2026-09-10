@@ -17,13 +17,13 @@ class Settings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     document_root: Path = DEFAULT_DOCUMENT_ROOT
-    index_path: Path | None = None
+    index_path: Path = DEFAULT_INDEX_PATH
     embedding_model: str | None = None
 
     @field_validator("document_root", "index_path", mode="before")
     @classmethod
-    def normalize_path(cls, value: str | Path | None) -> Path | None:
-        return Path(value).expanduser() if value is not None else None
+    def normalize_path(cls, value: str | Path) -> Path:
+        return Path(value).expanduser()
 
     @classmethod
     def load(cls, config_path: Path = DEFAULT_CONFIG_PATH) -> Settings:
@@ -54,11 +54,7 @@ class Settings(BaseModel):
                 encoding="utf-8",
             )
         document_root = cls._resolve_project_path(settings.document_root, project_root)
-        index_path = (
-            DEFAULT_INDEX_PATH.expanduser().resolve()
-            if settings.index_path is None
-            else cls._resolve_project_path(settings.index_path, project_root)
-        )
+        index_path = cls._resolve_project_path(settings.index_path, project_root)
         return settings.model_copy(
             update={"document_root": document_root, "index_path": index_path}
         )

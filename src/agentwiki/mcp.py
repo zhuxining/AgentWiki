@@ -33,6 +33,8 @@ mcp = FastMCP(
         "AgentWiki retrieves evidence from a local Markdown Wiki. You MUST call "
         "get_wiki_context when a task depends on Wiki history, conventions, prior decisions, "
         "cross-document relationships, recent changes, or content whose path is unknown. "
+        "The configured Wiki root is returned as `wiki_root` by retrieval and rules tools "
+        "(normally `~/AgentWiki`); result paths are relative to that root. "
         "If an exact path is already known and no other Wiki knowledge is needed, use native "
         "file tools directly. Search snippets are candidate evidence: read important source "
         "files with native tools before quoting them, deciding, or editing. Call "
@@ -108,7 +110,9 @@ async def get_wiki_context(
     )
     async with _runtime(ctx) as runtime:
         result = await runtime.retrieval.get_wiki_context(request)
-    return result.model_dump(mode="json")
+        response = result.model_dump(mode="json")
+        response["wiki_root"] = str(runtime.library.root)
+    return response
 
 
 @mcp.tool(
@@ -127,7 +131,9 @@ async def get_wiki_context(
 )
 async def get_wiki_rules(scope: str = "", *, ctx: Context) -> dict[str, object]:
     async with _runtime(ctx) as runtime:
-        return runtime.governance.get_wiki_rules(scope).model_dump(mode="json")
+        response = runtime.governance.get_wiki_rules(scope).model_dump(mode="json")
+        response["wiki_root"] = str(runtime.library.root)
+        return response
 
 
 @mcp.tool(
