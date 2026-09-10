@@ -1,6 +1,5 @@
 """Wiki organization rules and deterministic validation."""
 
-from collections import Counter
 from fnmatch import fnmatch
 from pathlib import Path, PurePosixPath
 import re
@@ -250,17 +249,6 @@ class GovernanceService:
                         path=document.path.value,
                         field="tags",
                         message=f"建议使用规范标签: {', '.join(non_canonical)}",
-                    )
-                )
-            duplicates = sorted(tag for tag, count in Counter(canonical_tags).items() if count > 1)
-            if duplicates:
-                result.append(
-                    ValidationIssue(
-                        code="tags.duplicate",
-                        severity="warning",
-                        path=document.path.value,
-                        field="tags",
-                        message=f"标签归一后重复: {', '.join(duplicates)}",
                     )
                 )
             configured = set(rules.tag_aliases)

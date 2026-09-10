@@ -130,9 +130,9 @@ def test_tag_aliases_warn_and_new_tags_remain_allowed(tmp_path) -> None:
     assert report.status == "passed"
     assert {issue.code for issue in report.warnings} >= {
         "tags.non_canonical",
-        "tags.duplicate",
         "tags.new",
     }
+    assert "tags.duplicate" not in {issue.code for issue in report.warnings}
     catalog = {item.tag: item for item in service.get_wiki_rules().known_tags}
     assert catalog["architecture"].count == 3
     assert catalog["architecture"].aliases_seen == ("arch", "Architecture")

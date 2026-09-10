@@ -53,8 +53,12 @@ class SQLiteSearchRepository:
     ) -> str | None:
         vectors: list[list[float]] | None = None
         vector_error: str | None = None
+        tags = self._tag_text(document.frontmatter.get("tags", []))
         if self.embedding_provider is not None and chunks:
-            texts = [f"{document.title}\n{chunk.section}\n{chunk.content}" for chunk in chunks]
+            texts = [
+                f"{document.title}\n{tags}\n{chunk.section}\n{chunk.content}"
+                for chunk in chunks
+            ]
             try:
                 vectors = await asyncio.to_thread(self.embedding_provider.embed_documents, texts)
                 if len(vectors) != len(chunks):
@@ -109,7 +113,7 @@ class SQLiteSearchRepository:
                     (
                         chunk.chunk_id,
                         document.path.value,
-                        document.title,
+                        f"{document.title} {tags}".strip(),
                         chunk.section,
                         chunk.content,
                     ),
@@ -306,6 +310,12 @@ class SQLiteSearchRepository:
             cls._metadata_matches(metadata, key, expected)
             for key, expected in query.metadata_filters.items()
         )
+
+    @staticmethod
+    def _tag_text(value: object) -> str:
+        if isinstance(value, (list, tuple)):
+            return " ".join(str(item) for item in value)
+        return str(value) if value else ""
 
     @staticmethod
     def _json_default(value: object) -> str:

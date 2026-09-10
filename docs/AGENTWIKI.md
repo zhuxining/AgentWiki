@@ -64,6 +64,8 @@ tag_aliases:
 
 新建或首次修改陌生目录前，先调用 `get_wiki_rules` 获取适用规则。每篇 Markdown 文档都应包含 `required_fields` 中声明的 Frontmatter 字段。
 
+目录规则中的 `path` 是相对于 Wiki 根目录的路径。`path: decisions` 会匹配 `decisions/` 及其所有子目录中的文件，不会匹配 `projects/decisions/` 或 `decisions-old/`。`path` 也支持 glob，例如 `*decisions*` 匹配路径字符串中包含 `decisions` 的路径，`projects/*/decisions` 匹配项目目录下的 decisions 子目录；glob 应谨慎使用，避免范围过宽。
+
 ## 修改后校验
 
 使用原生工具创建或编辑 Markdown 后，调用 `validate_wiki` 检查格式、Frontmatter、目录约束和内部链接。发现问题时修复后再次校验。

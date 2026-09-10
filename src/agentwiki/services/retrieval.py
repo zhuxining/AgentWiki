@@ -61,11 +61,14 @@ class RetrievalService:
                 truncated=len(candidates) > normalized.limit,
             )
 
-        search_query = normalized.model_copy(update={"query": topic})
+        exact_query = normalized.model_copy(update={"query": topic})
+        search_query = normalized.model_copy(
+            update={"query": self._expand_tag_terms(topic, normalized.tag_aliases)}
+        )
         candidate_limit = max(search_query.limit * 4, 20)
         async with asyncio.TaskGroup() as group:
             exact_task = group.create_task(
-                self.repository.exact_candidates(search_query, candidate_limit=candidate_limit)
+                self.repository.exact_candidates(exact_query, candidate_limit=candidate_limit)
             )
             keyword_task = group.create_task(
                 self.repository.keyword_candidates(search_query, candidate_limit=candidate_limit)
@@ -105,6 +108,16 @@ class RetrievalService:
             results=tuple(selected),
             truncated=truncated,
         )
+
+    @staticmethod
+    def _expand_tag_terms(query: str, aliases: dict[str, tuple[str, ...]]) -> str:
+        terms = [query]
+        lowered = query.casefold()
+        for canonical, values in aliases.items():
+            spellings = (canonical, *values)
+            if any(spelling.casefold() in lowered for spelling in spellings):
+                terms.extend(spellings)
+        return " ".join(dict.fromkeys(term for term in terms if term))
 
     async def _semantic(
         self, query: ContextQuery, candidate_limit: int

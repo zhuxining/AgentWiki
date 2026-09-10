@@ -89,6 +89,8 @@ sections:
 
 ### `sections[]` 字段
 
+`path` 按 Wiki 根目录下的相对路径匹配。配置 `path: decisions` 时，匹配 `decisions` 目录及其所有后代路径（如 `decisions/example.md`、`decisions/archive/old.md`），但不匹配 `projects/decisions/example.md` 或 `decisions-old/example.md`。`path` 支持 glob；例如 `*decisions*` 会匹配路径字符串中包含 `decisions` 的路径，`projects/*/decisions` 会匹配项目目录下的 decisions 子目录。glob 应谨慎使用，避免范围过宽。
+
 | 字段 | 必填 | 行为 |
 | --- | --- | --- |
 | `path` | 是 | 相对路径或 `fnmatch` 模式，如 `guides`、`projects/*` |
@@ -106,7 +108,7 @@ sections:
 - 多条目录规则匹配时按 `path` 长度从短到长应用，更具体的规则最后生效。
 - `filename_pattern` 只校验匹配目录下文档的文件名。
 - 标签建议使用小写规范形式，可用 `/` 表达层级，例如 `engineering/backend`。
-- `tag_aliases` 只提供归一建议，不限制新标签；别名和大小写变体会产生 warning。
+- `tag_aliases` 只提供归一建议，不限制新标签；别名和大小写变体会产生 warning。重复标签会在检索归一时视为同一标签，不单独提示。
 - `get_wiki_rules` 会返回当前配置、指引、动态 `known_tags` 和 `wiki_root`。
 - 首次出现且未配置别名的新标签产生 warning，但仍允许保存。
 - 所有问题都由 `validate_wiki` 返回；校验不会自动改写 Markdown。
@@ -121,7 +123,6 @@ sections:
 | `path.filename` | error | 文件名不符合目录的 `filename_pattern` |
 | `tags.invalid` | error | `tags` 不是非空字符串列表，或标签语法无效 |
 | `tags.non_canonical` | warning | 标签是别名或大小写不规范，并给出规范标签建议 |
-| `tags.duplicate` | warning | 同一文档内的标签归一后重复 |
 | `tags.new` | warning | 标签首次出现且尚未配置为规范标签 |
 | `link.broken` | warning | 内部 Markdown 链接目标不存在 |
 | `markdown.formatting` | warning | 文档不符合 mdformat 规范 |
