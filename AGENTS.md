@@ -4,12 +4,12 @@
 
 ## 项目概览
 
-AgentWiki 使用本地 Markdown 文档库作为文档事实源，以 Markdown 正文承载内容、YAML Frontmatter 承载元数据，并将文档索引到本地 SQLite。核心目标是让 Agent 通过统一工具读写、移动、删除和搜索文档，支持关键词和语义查询。
+AgentWiki 使用本地 Markdown 文档库作为文档事实源，以 Markdown 正文承载内容、YAML Frontmatter 承载元数据，并将文档片段索引到本地 SQLite。核心目标是为 Agent 提供精确、关键词、语义、混合和近期搜查能力；已知路径读取和文档增删改由 Agent 原生工具完成。
 
 当前正式入口是：
 
-- **CLI**：本地调试、初始化、批处理和自动化脚本入口。
-- **MCP**：为 Agent 暴露与 CLI 共享的文档操作工具。
+- **CLI**：本地检索、索引同步、重建、监听和治理维护入口。
+- **MCP**：为 Agent 暴露任务上下文检索、Wiki 规则和规范校验；不重复暴露 Agent 原生文件工具。
 
 HTTP API、云端同步和 Web UI 不属于当前架构承诺。
 
@@ -28,12 +28,12 @@ HTTP API、云端同步和 Web UI 不属于当前架构承诺。
 ```text
 src/agentwiki/
 ├── cli.py               # CLI composition root 与命令适配
-├── mcp.py               # MCP server、工具与资源适配
-├── domain/              # 领域模型、值对象、规则和领域错误
-├── services/            # 文档操作、搜索和索引同步的业务流程
-├── repository/          # SQLite、FTS5 和向量索引访问
-├── indexing/            # 文件扫描、增量索引和索引重建
-├── markdown/            # Markdown、Frontmatter、本地文档库文件系统适配
+├── mcp.py               # MCP retrieval/rules/validation 适配
+├── domain/              # 文档、检索证据、规则和校验模型
+├── services/            # 检索编排、排名融合、规则和校验流程
+├── repository/          # SQLite 生命周期、FTS5 和向量候选访问
+├── indexing/            # Markdown 切块、增量同步和索引重建
+├── markdown/            # Markdown、Frontmatter 和只读文档库适配
 ├── config.py            # 配置模型与配置读取
 └── runtime/             # 文件监听、运行上下文和后台索引生命周期
 ```
@@ -43,21 +43,21 @@ src/agentwiki/
 ```text
 CLI/MCP composition roots
             ↓
-        services
+       runtime context
             ↓
-        domain
+          services
             ↓
- repository / indexing
-            ↓
-      markdown / SQLite
+   domain / service ports
+            ↑
+repository / indexing / markdown
 ```
 
 - `domain` 不依赖 Typer、FastMCP、文件系统或具体配置实现。
-- `services` 编排文档的读、写、改、删、移动、索引和搜索；需要替换实现或隔离测试时，再为稳定边界引入 Protocol 契约。
-- `repository` 负责通过 `aiosqlite` 异步访问 SQLite、FTS5 和向量索引，不负责完整业务流程。
-- `indexing` 负责从 Markdown 文档库扫描、增量更新和重建索引。
-- `markdown` 负责 Markdown、Frontmatter 和本地文档库文件操作。
-- `runtime` 只承载运行上下文、文件监听和后台索引生命周期；没有这些需求时不强行扩展它。
+- `services` 编排任务检索、排名融合、规则和校验，通过 `ports.py` 中的 Protocol 使用稳定适配边界。
+- `repository` 负责通过 `aiosqlite` 异步访问 SQLite、FTS5 和向量投影，不判断用户检索意图。
+- `indexing` 负责 Markdown 标题感知切块、文件指纹、增量同步和重建索引。
+- `markdown` 负责路径安全、Markdown/Frontmatter 只读解析和格式规范比较。
+- `runtime` 承载显式资源装配、同步锁、文件监听和索引生命周期。
 - `cli`、`mcp` 只负责协议适配、参数转换、用例调用和结果序列化。
 - 只有 composition root 可以读取全局配置；其他模块通过构造参数接收配置和依赖。
 
@@ -80,8 +80,6 @@ uv run ty check --fix
 # 运行全部测试
 uv run pytest
 
-# Markdown 写入和编辑由服务层统一经过 mdformat；新增路径不得绕过格式化边界。
-
 # 监听 Markdown 变更并同步索引
 uv run agentwiki watch-index
 
@@ -101,19 +99,21 @@ uv run pytest tests/path/to/test_file.py
 - 新增依赖前先检查现有依赖是否已提供等价能力，避免引入同类替代品。
 - 运行脚本优先使用 `uv run`，不要绕过项目环境直接调用全局 Python 包。
 - 修改 `pyproject.toml` 后同步检查 `uv.lock` 是否需要更新。
-- 配置模型使用 `pydantic-settings` 从环境变量读取并校验；不要在业务模块中直接读取环境变量。
+- 配置模型使用 Pydantic 从项目根目录 `.agentwiki/config.json` 读取并校验；不读取环境变量，业务模块只接收已解析的构造参数。
 
 ### 需求与架构
 
 - 复杂改动先确认目标、边界和验收标准，再实现。
 - 新能力先确定领域归属、文件命名和依赖方向，再添加代码。
-- 入口层不承载文档操作规则；CLI 和 MCP 必须复用 services 层。
+- Agent 原生工具负责已知路径读取和文档增删改；MCP 承载任务检索、规则和规范校验。
 - Markdown 文件是文档存储的事实边界；不要在入口层复制一套平行存储模型。
 - SQLite 是可删除、可重建的派生索引，不是文档事实源；索引损坏或过期时必须支持从文档库重建。
 - SQLite 连接由异步生命周期显式初始化和关闭；禁止在 services、CLI 或 MCP 中重新引入同步 `sqlite3` 查询。
 - 关键词搜索使用 SQLite FTS5；语义搜索使用可选的本地 embedding provider 和向量投影，语义依赖不可用时关键词搜索仍必须可用。
 - 跨文档库根目录的路径必须拒绝；敏感信息不得写入文档文件。
-- Markdown 写入成功后才更新 SQLite；索引更新失败不得覆盖或回滚 Markdown，必须保留可重建状态。
+- 查询前以路径、真实 `mtime_ns` 和大小增量确认外部 Markdown 变化；索引更新失败不得覆盖或回滚 Markdown，必须保留可重建状态。
+- Wiki 根目录的 `_agentwiki/context.yaml` 和 `_agentwiki/guide.md` 是组织规则与 Agent 指导入口，不作为普通文档索引；Frontmatter 始终要求 `title`、`type`、`tags`、`created_at`、`updated_at`，规则可追加 `required_fields` 并用可选 `tag_aliases` 归一同义标签；优先复用动态 `known_tags`，新标签仅告警、不阻断，其他字段允许扩展。
+- 原生工具写入或编辑后应执行格式、结构、Frontmatter 和内部链接校验；校验只报告，不自动改写 Markdown。
 - 外部 Markdown 变更优先走增量同步；只有显式 rebuild 或索引恢复场景才清空并全量重建 SQLite 投影。
 - 索引扫描遇到单个文档的 Markdown/YAML 解析错误时，不得静默丢弃；至少记录相对路径和错误原因，并继续处理其他文档。
 
@@ -196,7 +196,7 @@ Commit 遵循 Conventional Commits：`feat`、`fix`、`refactor`、`docs`、`tes
 - 不要用 `eval()` 或 `exec()` 执行动态代码
 - 使用参数化查询，避免 SQL 字符串拼接
 - 不要将密钥、密码硬编码在源码中，使用环境变量或 secrets 管理
-- 对用户输入进行验证和清理；结构化输入和配置优先使用 `pydantic` 与 `pydantic-settings`
+- 对用户输入进行验证和清理；结构化输入和配置优先使用 Pydantic
 - 使用 `secrets` 模块生成安全随机数，而非 `random`
 
 ### 性能

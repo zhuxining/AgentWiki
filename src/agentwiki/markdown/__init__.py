@@ -1,5 +1,5 @@
-"""Markdown document storage."""
+"""Markdown library adapters."""
 
-from agentwiki.markdown.store import MarkdownStore
+from agentwiki.markdown.library import MarkdownLibrary
 
-__all__ = ["MarkdownStore"]
+__all__ = ["MarkdownLibrary"]

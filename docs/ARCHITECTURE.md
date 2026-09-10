@@ -1,259 +1,78 @@
-# AgentWiki Architecture
+# AgentWiki 架构
 
-> **Status**: active
->
-> 本文描述 AgentWiki 的目标架构、稳定边界和阶段约束。目标架构不等同于当前已完成的实现；实现状态以代码和测试为准。
+## 1. 产品边界
 
-## 1. 系统目标
+AgentWiki 是本地 Markdown Wiki 的搜查与治理层。它负责：
 
-AgentWiki 是一个面向多个 AI Agent 的本地优先文档层。它使用本地 Markdown 文档库作为人和 Agent 都能访问的文档边界，为 Agent 提供统一的 Markdown 文档操作能力。
+- 为 Agent 检索历史、约定、已有方案、关联内容和近期变化；
+- 使用 FTS5、可选本地 embedding 和排名融合返回章节级证据；
+- 提供目录组织规则，并在原生文件修改后执行确定性校验；
+- 保持 SQLite 投影可删除、可增量同步和可全量重建。
 
-核心能力：
+Agent 原生工具负责已知路径读取、创建、编辑、移动和删除。HTTP API、云同步、Web UI、
+知识图谱、查询 LLM 和操作审计不属于当前范围。
 
-- 写文档：创建文档，写入正文和 YAML Frontmatter；
-- 读文档：按路径读取文档及其元数据；
-- 改文档：更新正文、Frontmatter 或文档属性；
-- 删除文档：删除文档库内的指定文档；
-- 移动文档：在文档库根目录内修改文档路径；
-- 搜索文档：使用关键词、语义或混合模式查询文档。
+## 2. 数据与检索
 
-AgentWiki 聚焦文档操作、索引和搜索，不扩展为内容工作流或项目管理系统。
+Markdown 正文和 YAML Frontmatter 是事实源。`_agentwiki/context.yaml` 与
+`_agentwiki/guide.md` 是保留治理文件，不进入普通索引。
 
-## 2. 核心原则
+索引保存：
 
-### 2.1 Markdown 文档库是持久化边界
+- 文档路径、标题、Frontmatter、真实 `mtime_ns` 和大小；
+- 按 Markdown 标题层级切分的有界片段；
+- 片段级 FTS5 投影和可选向量；
+- 用于变化检测的文件指纹。
 
-本地 Markdown 文档库是文档的事实来源。AgentWiki 不在入口层维护一套与文档库脱节的平行文档存储。
+查询前执行增量确认，只解析变化文档并清理删除投影。rebuild 不得用执行时间覆盖文件修改
+时间。“最近活动”因此表示当前仍存在文档的真实修改时间，不是索引时间或审计历史。
 
-### 2.2 SQLite 是可重建的派生索引
+普通查询并发取得路径/标题、关键词和语义候选，再使用排名融合；同一文档最多返回两个片段。
+语义依赖不可用时降级为关键词查询，并在结果中说明原因。带近期意图的主题查询额外加入
+新近度排名，普通查询不受时间偏置。
 
-SQLite 保存从 Markdown 文档库派生的文档元数据、关键词索引和可选语义向量。它用于加速搜索，不拥有文档内容的最终写入权，也不替代 Markdown 文件。
-
-- Markdown 文件丢失时，索引记录必须能够被清理；
-- SQLite 损坏或版本变化时，必须能够从 Markdown 文档库全量重建；
-- 索引暂时不可用时，文档读写仍应以 Markdown 文档库为准，搜索能力可以降级或报告索引不可用。
-
-### 2.3 一个文件对应一个文档
-
-一条可独立读取、修改、移动和搜索的内容对应一个 Markdown 文件：
-
-- Markdown 正文承载人类可读内容；
-- YAML Frontmatter 承载类型、状态、范围、项目、标签、来源和时间等元数据；
-- Frontmatter 是解析、过滤和搜索的共享契约。
-
-### 2.4 入口层只做协议适配
-
-CLI 和 MCP 可以有不同的参数格式和返回格式，但不得各自实现文档操作规则。两者必须调用同一套 services/domain 能力。
-
-### 2.5 Composition root 负责装配
-
-每个入口拥有自己的 composition root，负责读取配置、解析运行模式、创建容器和装配依赖。业务模块通过构造参数或适配器接收依赖，不直接读取全局配置。
-
-### 2.6 本地优先、可演进
-
-文档操作规则不绑定具体入口或文件系统实现。未来若增加其他存储或入口，应通过新的 adapter 和 composition root 接入，而不是侵入领域层。
-
-## 3. 入口与数据流
-
-当前正式入口只有 CLI 和 MCP：
+## 3. 模块与依赖
 
 ```text
-Agent / Script
-      │
-      ├────────────── CLI composition root
-      │                       │
-      └────────────── MCP composition root
-                              │
-                              ▼
-                    Services / use cases
-                              │
-                              ▼
-                       Domain rules
-                              │
-                              ▼
-                    Markdown / SQLite adapters
-                       │             │
-                       ▼             ▼
-                Markdown 文档库   Local SQLite index
-```
-
-MCP 另外注册 `wiki://{path*}` Resource Template 作为只读 Markdown 读取入口。它与
-`read_note` 共用同一套 service 和路径安全规则，不承担写入职责。FastMCP lifespan 在
-MCP 会话级别创建并复用 `NoteService` 及 aiosqlite 连接；Context 只负责运行时注入、
-日志和进度通知，不向 domain 层泄漏协议依赖。
-
-典型流程：
-
-```text
-写入：CLI/MCP → write_note → 路径与内容校验 → Markdown adapter → Markdown 文件 → 更新索引
-读取：CLI/MCP → read_note → 路径解析 → Markdown adapter → 文档结果
-修改：CLI/MCP → update_note → 文档存在性与内容校验 → Markdown adapter → 更新索引
-删除：CLI/MCP → delete_note → 路径边界校验 → Markdown adapter → 删除索引记录
-移动：CLI/MCP → move_note → 源路径与目标路径校验 → Markdown adapter → 更新索引路径
-搜索：CLI/MCP → search_notes → 查询条件解析 → SQLite FTS/向量索引 → 匹配结果
-外部变更：文档库 watcher/启动扫描 → Markdown adapter → 增量索引或索引重建
-```
-
-HTTP API、云端同步和 Web UI 暂不属于当前架构承诺；新增入口时必须复用 services/domain 层。
-
-## 4. 领域划分
-
-### note
-
-代表一份可持久化的 Markdown 文档，包含路径、正文和 Frontmatter。note 领域对象不直接暴露文件系统操作。
-
-### notePath
-
-代表文档库内的相对文档路径。它负责路径格式和文档库根目录边界，禁止路径穿越、绝对路径和越界软链接场景。
-
-### Frontmatter
-
-代表 Markdown 文件头部的 YAML 元数据，负责解析、序列化、字段访问和搜索条件匹配。
-
-### SearchQuery / SearchResult
-
-`SearchQuery` 表达路径、正文和 Frontmatter 的搜索条件，以及 `keyword`、`semantic` 或 `hybrid` 检索模式；`SearchResult` 表达匹配文档的路径、元数据、相关性分数和必要的内容摘要。搜索规则属于 services/domain，具体 FTS 和向量查询由 repository 实现。
-
-### DocumentIndex
-
-代表 SQLite 中的一条文档索引投影，至少包含文档库相对路径、文件标识或修改时间、Frontmatter 可查询字段、可搜索正文和索引状态。DocumentIndex 可以被删除和重建，不是新的文档事实源。
-
-### MarkdownDocument
-
-这是 Markdown 文件的持久化表示，不等同于领域模型：
-
-- `MarkdownDocument` 描述路径、正文和原始元数据；
-- services 层把持久化表示转换为领域对象或结果 DTO；
-- markdown 模块负责 Markdown/YAML 的具体读写。
-
-## 5. 模块与依赖边界
-
-目标源码结构：
-
-```text
-src/agentwiki/
-├── cli.py               # CLI composition root、命令和输出适配
-├── mcp.py               # MCP server、工具、资源和协议适配
-├── domain/              # note、notePath、Frontmatter、SearchQuery、索引规则
-├── services/            # 文档用例、搜索和索引同步业务流程
-├── repository/          # SQLite、FTS5 和向量索引访问
-├── indexing/            # 扫描、增量同步和索引重建
-├── markdown/            # Markdown、Frontmatter、本地文档库文件系统
-├── config.py            # 配置模型与配置读取
-└── runtime/             # 文件监听、运行上下文和后台索引生命周期
-```
-
-当前实现的依赖方向：
-
-```text
-cli.py/mcp.py composition roots
+CLI / MCP composition roots
             ↓
-        services
+       runtime context
             ↓
-        domain
-
-services ───────────────→ markdown / repository
-indexing ────────────────→ markdown / repository
-runtime ─────────────────→ services
+ services/retrieval + services/governance
+            ↓
+ service ports + domain values
+            ↑
+ indexing / repository / markdown adapters
 ```
 
-边界规则：
+- `domain`：文档、检索结果、规则与校验的纯模型；
+- `services`：任务检索策略、排名融合、规则合并和校验；
+- `indexing`：标题感知切块、文件指纹、增量同步和 rebuild；
+- `repository`：SQLite 生命周期、片段投影、FTS5 和向量候选；
+- `markdown`：路径安全、只读扫描、Frontmatter 解析和格式比较；
+- `runtime`：显式资源装配、同步锁和可选 watcher；
+- `cli`、`mcp`：读取配置、协议适配和结果序列化。
 
-- `domain` 不导入 Typer、FastMCP、Path 读写实现或具体配置管理器。
-- `mcp` 可以依赖 FastMCP 的 `Context`、lifespan、Resource Template 等协议能力，但这些
-  只停留在 composition root/adapter；文档规则仍由 services/domain 负责。
-- `services` 负责文档用例编排、操作顺序、索引同步和错误转换；当前直接接收 MarkdownStore 和 SQLiteIndex，稳定替换边界形成后再抽取 Protocol 契约。
-- `repository` 通过 `aiosqlite` 实现 SQLite、FTS5 和向量索引访问，不负责完整业务流程；连接初始化、提交和关闭都属于异步生命周期。
-- `indexing` 实现 Markdown 文档扫描、增量同步和索引重建。
-- `markdown` 实现 Markdown、Frontmatter 和本地文档库文件操作。
-- `runtime` 只承载文件监听、运行上下文和后台索引生命周期；不承载文档业务规则。
-- `cli`、`mcp` 不直接读写文档库，也不复制文档校验和搜索规则。
-- 配置只由 composition root 读取，再显式传递给下游模块；业务模块不得直接读取环境变量。
+services 通过 Protocol 使用稳定边界，不直接创建 SQLite 或读取配置。composition root
+统一读取项目根目录的 `.agentwiki/config.json`；runtime factory 只接受已经解析的构造参数。
 
-## 6. 工具契约
+## 4. Agent 工作流
 
-MCP 工具的具体参数、返回值、错误边界和调用示例见 [MCP Tools 说明](MCP_TOOLS.md)。
+1. 任务依赖 Wiki 知识、近期变化或未知位置时调用 `get_wiki_context`；
+2. 用 Agent 原生工具读取关键命中文档，不能只根据摘要下结论；
+3. 出现新实体、证据不足或矛盾时细化查询并再次检索；
+4. 新建、移动或首次修改陌生范围前调用 `get_wiki_rules`；
+5. 使用原生工具修改 Markdown；
+6. 调用 `validate_wiki(path=...)`，全库验收才使用 `full=true`。
 
-CLI 和 MCP 应共享以下核心文档能力。协议层可以调整参数命名和返回格式，但不能改变语义：
+已知准确路径且不依赖其他 Wiki 知识时，直接使用原生文件工具，不做无效检索。
 
-| 工具 | 语义 |
-| --- | --- |
-| `write_note` | 创建新文档；若产品规则允许，也可作为完整快照写入入口 |
-| `read_note` | 按路径、`wiki://` 标识或唯一标题读取单份文档 |
-| `edit_note` | 对已有文档执行 append、prepend、find-replace 或章节编辑 |
-| `update_note` | 兼容性入口：更新已有文档的完整正文或 Frontmatter |
-| `delete_note` | 删除指定文档 |
-| `move_note` | 将文档移动到文档库内的新相对路径 |
-| `search_notes` | 使用关键词、语义或混合模式搜索并返回匹配文档 |
-| `list_directory` | 按目录、深度、文件名 glob 和分页浏览 Markdown 文件 |
+## 5. 可靠性
 
-这些工具只负责文档操作、索引同步和搜索，不承载内容工作流或项目管理流程。
-
-### 搜索实现
-
-- **关键词查询**：使用 SQLite FTS5，对路径、标题、正文和可查询 Frontmatter 建立全文索引。
-- **语义查询**：使用 `fastembed.TextEmbedding` 生成本地文档和查询向量，并通过 SQLite 向量投影进行近邻检索；`sqlite-vec` 可用时使用向量扩展，否则回退到 SQLite 中保存的 JSON 向量进行本地相似度计算。语义模型按配置惰性加载，不得阻塞未启用语义模型时的基础文档操作。
-- **混合查询**：分别取得关键词和语义候选，再由 services 层合并、去重和排序。
-- **索引同步**：文档写入、修改、删除和移动成功后刷新对应索引；启动时支持全量扫描，外部 Markdown 变更通过内容哈希执行增量同步，删除过期路径，避免每次 watcher 事件清空并重建整个投影。文档索引保存内容哈希，向量索引保存来源哈希、模型名和维度，避免复用过期向量。
-- **降级策略**：没有配置 embedding provider 时，`search_notes` 仍支持关键词模式；请求语义模式时返回明确配置错误，不伪造搜索结果。
-
-搜索还支持分页、标签、文档类型和 Frontmatter 过滤；过滤支持嵌套字段及 `$in`、`$gt`、`$gte`、`$lt`、`$lte`、`$between` 基础比较。不引入云端项目范围、知识图谱或内容审核状态。
-
-### Markdown 编辑与格式化
-
-- `write_note` 支持用标题和目录生成 Markdown 路径，也支持显式相对路径；标签、文档类型和 metadata 写入 Frontmatter，正文自带的 YAML Frontmatter 会被解析并合并。
-- `read_note` 支持返回 Frontmatter 以及按 1-based 行号读取范围；读取范围只影响返回内容，不改变文件。
-- `list_directory` 只浏览文档库内的 Markdown 文件和目录，支持深度、文件名 glob 和分页；不暴露越界软链接或其他文件类型。
-- `edit_note` 支持 `append`、`prepend`、`find_replace`、`replace_section`、`insert_before_section` 和 `insert_after_section`，默认保留 Frontmatter，传入 metadata 时合并更新。
-- `append` 和 `prepend` 在目标不存在时按标题或路径创建文档；目录移动和删除同时更新 SQLite 中受影响的路径。
-- 文件写入统一通过 `mdformat` 的 GFM 和 Frontmatter 扩展格式化，避免 CLI、MCP 和服务层产生不同的 Markdown 形态。
-
-## 7. 持久化与安全边界
-
-- 所有文件路径必须解析并限制在文档库根目录内，拒绝路径穿越和越界软链接场景。
-- 新建、更新、删除和移动操作必须经过统一 services 层。
-- Markdown 文件写入成功后再更新 SQLite 派生索引；索引更新失败必须留下可重建状态，不能回滚或覆盖 Markdown 事实源。
-- SQLite 使用 `aiosqlite`、本地文件和 WAL 等适合本地并发的配置；不引入同步数据库访问、Postgres、远程数据库或云端索引服务。
-- 删除是明确的文档操作，不应被入口层静默改写成其他状态转换。
-- API key、password、token 等敏感字段禁止写入文档正文或 Frontmatter。
-- Frontmatter 缺失或格式错误的文档仍是文件系统中的文档；读取和搜索流程应返回可定位的解析错误或降级结果。
-- 文件系统错误、解析错误、路径错误和查询错误应保持可区分，入口层再转换为适合 CLI/MCP 的错误表示。
-
-## 8. 阶段演进
-
-### 当前基础阶段
-
-- 稳定包名、配置入口和 CLI/MCP composition root；
-- 建立 note、notePath、Frontmatter 和 SearchQuery 边界；
-- 实现 `write_note`、`read_note`、`update_note`、`delete_note`、`move_note` 和 `search_notes`；
-- 建立本地 SQLite 索引，支持 FTS5 关键词搜索、全量重建和基础增量同步；
-- 提供目录浏览和外部 Markdown 变更的增量索引同步；
-- 使用 `fastembed` 提供本地 embedding，配合可选 `sqlite-vec` 向量检索，未配置模型时保持关键词搜索可用；
-- 为路径安全、Markdown/YAML 解析、文件写入、索引同步和关键词搜索建立测试。
-
-### 后续增强阶段
-
-- 完善 embedding 模型配置、向量分块、关键词/语义混合排序和大文档库性能；
-- 优化大型 Markdown 文档库的搜索索引、变更监测和结果分页；
-- 增加文档冲突检测、并发写入保护和变更审计；
-- 增加更多 Markdown 文档组织和批量操作能力。
-
-新增能力时，应先更新文档领域边界和适配边界，再实现入口适配；稳定替换边界形成后再抽取 Protocol，不要直接把新规则添加到 CLI command 或 MCP tool 中。
-
-## 9. 测试策略
-
-- `domain`：测试路径值对象、Frontmatter 规则、搜索条件和错误边界。
-- `services`：使用隔离的 fake store/index 测试核心文档用例的编排、依赖注入和失败传播。
-- `repository`、`indexing`、`markdown`：测试 Markdown/YAML 解析、文档库路径边界、文件创建、更新、删除、移动、SQLite 索引、FTS 查询和索引重建。
-- `semantic` 集成测试：在本地 embedding 和 sqlite-vec 可用时测试向量生成、语义检索和混合搜索；基础测试不得依赖模型下载或外部 API。
-- `cli`、`mcp`：测试参数转换、调用正确用例和结果序列化，不重复测试领域规则。
-- 真实外部服务测试使用 `integration` marker；纯单元测试保持确定、快速。
-
-所有实现改动至少应通过：
-
-```bash
-uv run ruff check
-uv run ty check
-uv run pytest
-git diff --check
-```
+- 文档变更不会因索引或 embedding 失败而被回滚；
+- 单篇解析失败不会阻断其他文档，失败路径进入检索降级信息；
+- embedding 失败不会破坏关键词投影；
+- 路径和 scope 必须留在 Wiki 根目录；外部符号链接不进入索引；
+- 校验只报告问题，不自动改写原生工具产生的 Markdown；
+- Frontmatter 始终要求 `title`、`type`、`tags`、`created_at`、`updated_at`；规则可追加必填字段，并通过可选 `tag_aliases` 归一同义标签；动态 `known_tags` 用于复用提示，新标签仅告警、不阻断，其他字段允许扩展；
+- SQLite 连接由 async runtime 显式初始化并关闭。

@@ -1,5 +1,6 @@
-"""SQLite repositories and search indexes."""
+"""Concrete repositories for the rebuildable search projection."""
 
-from agentwiki.repository.sqlite_index import SQLiteIndex
+from agentwiki.repository.search import SQLiteSearchRepository
+from agentwiki.repository.sqlite import SQLiteDatabase
 
-__all__ = ["SQLiteIndex"]
+__all__ = ["SQLiteDatabase", "SQLiteSearchRepository"]

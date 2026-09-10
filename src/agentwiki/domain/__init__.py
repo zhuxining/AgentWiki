@@ -1,5 +1,13 @@
-"""Domain values used by document services."""
+"""Public domain values for AgentWiki."""
 
-from agentwiki.domain.models import Frontmatter, Note, NotePath, SearchQuery, SearchResult
+from agentwiki.domain.documents import DocumentPath, Frontmatter, WikiDocument
+from agentwiki.domain.retrieval import ContextQuery, ContextResult, Evidence
 
-__all__ = ["Frontmatter", "Note", "NotePath", "SearchQuery", "SearchResult"]
+__all__ = [
+    "ContextQuery",
+    "ContextResult",
+    "DocumentPath",
+    "Evidence",
+    "Frontmatter",
+    "WikiDocument",
+]

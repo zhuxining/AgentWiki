@@ -7,36 +7,16 @@ from agentwiki.cli import app
 runner = CliRunner()
 
 
-def test_cli_supports_document_lifecycle(tmp_path) -> None:
+def test_cli_exposes_maintenance_workflow(tmp_path) -> None:
     root = tmp_path / "documents"
+    root.mkdir()
+    (root / "guide.md").write_text("Use SQLite\n", encoding="utf-8")
     index = tmp_path / "index.sqlite3"
     common = ["--root", str(root), "--index", str(index)]
-
-    created = runner.invoke(
-        app,
-        [
-            "write-note",
-            "guide.md",
-            "--content",
-            "Use SQLite",
-            "--metadata",
-            '{"kind":"guide"}',
-            *common,
-        ],
-    )
-    assert created.exit_code == 0, created.stdout
-
-    searched = runner.invoke(app, ["search-notes", "SQLite", *common])
-    assert searched.exit_code == 0, searched.stdout
-    assert json.loads(searched.stdout)[0]["path"]["value"] == "guide.md"
-
-    listed = runner.invoke(app, ["list-directory", *common])
-    assert listed.exit_code == 0, listed.stdout
-    assert json.loads(listed.stdout)["entries"][0]["path"] == "guide.md"
-
-    moved = runner.invoke(app, ["move-note", "guide.md", "docs/guide.md", *common])
-    assert moved.exit_code == 0, moved.stdout
-
-    deleted = runner.invoke(app, ["delete-note", "docs/guide.md", *common])
-    assert deleted.exit_code == 0, deleted.stdout
-    assert not (root / "docs/guide.md").exists()
+    queried = runner.invoke(app, ["query", "SQLite", *common])
+    assert queried.exit_code == 0, queried.stdout
+    assert json.loads(queried.stdout)["results"][0]["path"] == "guide.md"
+    help_result = runner.invoke(app, ["--help"])
+    assert help_result.exit_code == 0
+    for removed in ("write-note", "edit-note", "delete-note", "move-note", "list-directory"):
+        assert removed not in help_result.stdout

@@ -1,7 +1,7 @@
 [project]
 name = "agentwiki"
 version = "0.1.0"
-description = "Local Markdown document store with SQLite keyword and semantic search"
+description = "Local-first Markdown retrieval layer for AI agents"
 readme = "README.md"
 authors = [{ name = "zhuxining", email = "zhuxining@outlook.com" }]
 
@@ -10,7 +10,6 @@ dependencies = [
     "pyyaml>=6.0.3",
     "typer>=0.27.2",
     "pydantic>=2.13.5",
-    "pydantic-settings>=2.15.0",
     "loguru>=0.7.3",
     "fastmcp >=4.0.3",
     "watchfiles>=1.2.0",

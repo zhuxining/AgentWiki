@@ -1,5 +1,5 @@
-"""Document-to-index synchronization entry points."""
+"""Index synchronization workflows."""
 
-from agentwiki.indexing.rebuild import rebuild
+from agentwiki.indexing.sync import IndexSynchronizer
 
-__all__ = ["rebuild"]
+__all__ = ["IndexSynchronizer"]

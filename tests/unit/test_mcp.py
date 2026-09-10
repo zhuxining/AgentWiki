@@ -1,22 +1,41 @@
+import json
+
 from fastmcp import Client
 
 from agentwiki.mcp import mcp
 
 
-async def test_mcp_resource_template_reuses_lifespan_service(tmp_path, monkeypatch) -> None:
-    monkeypatch.setenv("AGENTWIKI_DOCUMENT_ROOT", str(tmp_path / "documents"))
-    monkeypatch.setenv("AGENTWIKI_INDEX_PATH", str(tmp_path / "index.sqlite3"))
-
+async def test_mcp_exposes_retrieval_rules_and_validation(tmp_path, monkeypatch) -> None:
+    root = tmp_path / "documents"
+    root.mkdir()
+    (root / "evidence.md").write_text("SQLite evidence\n", encoding="utf-8")
+    config_dir = tmp_path / ".agentwiki"
+    config_dir.mkdir()
+    (config_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "document_root": "documents",
+                "index_path": ".agentwiki/index.sqlite3",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
     async with Client(mcp) as client:
-        templates = await client.list_resource_templates()
-        assert any(template.uri_template == "wiki://{path*}" for template in templates)
-
-        result = await client.call_tool(
-            "write_note",
-            {"title": "Today", "content": "Local Markdown content.", "path": "today.md"},
-        )
-        assert result.is_error is False
-
-        contents = await client.read_resource("wiki://today.md")
-        assert "title: Today" in contents[0].text
-        assert contents[0].text.endswith("Local Markdown content.\n")
+        tools = await client.list_tools()
+        resources = await client.list_resources()
+        result = await client.call_tool("get_wiki_context", {"query": "SQLite"})
+    assert {tool.name for tool in tools} == {
+        "get_wiki_context",
+        "get_wiki_rules",
+        "validate_wiki",
+    }
+    assert {resource.uri for resource in resources} == {
+        "agentwiki://rules",
+        "agentwiki://guide",
+    }
+    context_tool = next(tool for tool in tools if tool.name == "get_wiki_context")
+    assert "mode" not in context_tool.input_schema.get("properties", {})
+    assert context_tool.annotations is not None
+    assert context_tool.annotations.read_only_hint is True
+    assert result.data["results"][0]["path"] == "evidence.md"
