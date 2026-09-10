@@ -36,6 +36,8 @@ def chunk_document(document: WikiDocument) -> tuple[IndexedChunk, ...]:
         flush()
 
     chunks: list[IndexedChunk] = []
+    tags = document.frontmatter.get("tags", [])
+    tag_text = " ".join(str(item) for item in tags) if isinstance(tags, list) else str(tags)
     ordinal = 0
     for section, content in sections:
         for fragment in _split_oversized(content):
@@ -50,6 +52,9 @@ def chunk_document(document: WikiDocument) -> tuple[IndexedChunk, ...]:
                     section=section,
                     content=fragment,
                     source_hash=sha256(source.encode()).hexdigest(),
+                    embedding_hash=sha256(
+                        f"{document.title}\n{tag_text}\n{source}".encode()
+                    ).hexdigest(),
                 )
             )
             ordinal += 1

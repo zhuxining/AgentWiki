@@ -4,6 +4,7 @@ import asyncio
 import operator
 from pathlib import PurePosixPath
 import re
+import sqlite3
 
 from agentwiki.domain.retrieval import (
     ContextQuery,
@@ -20,7 +21,13 @@ _RECENT_INTENT = re.compile(
     r"(?:最近|近期|新近|更新|变化|变更|活动|recent|latest|changed|updated)",
     re.IGNORECASE,
 )
-_SOURCE_ORDER: tuple[MatchSource, ...] = ("exact", "keyword", "semantic", "recency")
+_SOURCE_ORDER: tuple[MatchSource, ...] = (
+    "exact",
+    "keyword",
+    "semantic",
+    "graph",
+    "recency",
+)
 
 
 class RetrievalService:
@@ -42,6 +49,9 @@ class RetrievalService:
             }
         )
         sync = await self.synchronizer.ensure_fresh()
+        wait_for_vectors = getattr(self.repository, "wait_for_initial_vector_sync", None)
+        if wait_for_vectors is not None:
+            await wait_for_vectors()
         degraded = list(sync.degraded)
         has_recent_intent = bool(_RECENT_INTENT.search(normalized.query))
         topic = _RECENT_INTENT.sub(" ", normalized.query)
@@ -52,6 +62,7 @@ class RetrievalService:
                 normalized, candidate_limit=normalized.limit + 1
             )
             evidence = self._recent_evidence(candidates[: normalized.limit])
+            evidence = await self._attach_related(evidence)
             return ContextResult(
                 query=query.query,
                 scope=normalized.scope,
@@ -73,6 +84,9 @@ class RetrievalService:
             keyword_task = group.create_task(
                 self.repository.keyword_candidates(search_query, candidate_limit=candidate_limit)
             )
+            graph_task = group.create_task(
+                self._graph(search_query, candidate_limit)
+            )
             semantic_task = (
                 group.create_task(self._semantic(search_query, candidate_limit))
                 if self.repository.semantic_available
@@ -92,9 +106,11 @@ class RetrievalService:
             exact_task.result(),
             keyword_task.result(),
             semantic,
+            graph_task.result(),
             include_recency=has_recent_intent,
         )
         selected, truncated = self._select(ranked, search_query.limit)
+        selected = await self._attach_related(selected)
         strategy: RetrievalStrategy
         if has_recent_intent:
             strategy = "recent_hybrid"
@@ -108,6 +124,22 @@ class RetrievalService:
             results=tuple(selected),
             truncated=truncated,
         )
+
+    async def _attach_related(self, evidence: list[Evidence]) -> list[Evidence]:
+        related_query = getattr(self.repository, "related_documents", None)
+        if related_query is None or not evidence:
+            return evidence
+        related = await related_query(tuple(item.path for item in evidence), limit=5)
+        return [
+            item.model_copy(update={"related": related.get(item.path, ())})
+            for item in evidence
+        ]
+
+    async def _graph(self, query: ContextQuery, candidate_limit: int) -> list[SearchCandidate]:
+        graph_query = getattr(self.repository, "graph_candidates", None)
+        if graph_query is None:
+            return []
+        return await graph_query(query, candidate_limit=candidate_limit)
 
     @staticmethod
     def _expand_tag_terms(query: str, aliases: dict[str, tuple[str, ...]]) -> str:
@@ -129,7 +161,7 @@ class RetrievalService:
                 ),
                 None,
             )
-        except (ImportError, OSError, RuntimeError, ValueError) as exc:
+        except (ImportError, OSError, RuntimeError, TypeError, ValueError, sqlite3.Error) as exc:
             return [], f"semantic_unavailable: {exc}"
 
     @staticmethod
@@ -137,6 +169,7 @@ class RetrievalService:
         exact: list[SearchCandidate],
         keyword: list[SearchCandidate],
         semantic: list[SearchCandidate],
+        graph: list[SearchCandidate],
         *,
         include_recency: bool,
     ) -> list[tuple[SearchCandidate, float, set[MatchSource]]]:
@@ -147,6 +180,7 @@ class RetrievalService:
             ("exact", exact),
             ("keyword", keyword),
             ("semantic", semantic),
+            ("graph", graph),
         ):
             for rank, candidate in enumerate(values, start=1):
                 candidates[candidate.chunk_id] = candidate

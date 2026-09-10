@@ -53,6 +53,16 @@ uv run agentwiki-mcp
 查询前会比较 Markdown 路径、`mtime_ns` 和大小，只同步发生变化的文档，因此原生工具修改后
 的下一次检索无需等待 watcher。
 
+SQLite 只是镜像索引，不做旧 schema 迁移；检测到索引版本不兼容时会直接删除索引文件并从
+Markdown 重建，原始文档不会被改动。
+
+索引还会从 `[[内部链接]]`、相对 Markdown 链接和 Frontmatter `relations` 派生一跳文档关系，
+并将关系类型、来源章节、原文上下文和关联路径附加到检索证据中；目标不存在的关系会保留为
+`unresolved`。非法关系声明只产生诊断，不阻断其他文档索引。语义索引使用本地 sqlite-vec，
+按 chunk 的标题/标签/章节/正文 hash 复用未变化向量；模型切换会自动重建，首次建立等待初始
+向量同步，后续更新异步进行。扩展或 embedding 不可用时，关键词检索仍然可用。
+进程退出时未完成的向量任务会在下一次启动时恢复重试。
+
 详细设计见 [架构文档](docs/ARCHITECTURE.md)，协议见
 [MCP 能力说明](docs/MCP_TOOLS.md)，规则字段见
 [Wiki Rules 配置参考](docs/RULES.md)。真实 Wiki 基准测试见

@@ -14,7 +14,7 @@ async def watch_documents(
     *,
     stop_event: Event | None = None,
 ) -> None:
-    async for changes in awatch(root):
+    async for changes in awatch(root, debounce=300):
         if stop_event is not None and stop_event.is_set():
             return
         if any(Path(path).suffix.lower() == ".md" for _, path in changes):

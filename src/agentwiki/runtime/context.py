@@ -22,6 +22,7 @@ class AgentWikiRuntime:
     governance: GovernanceService
 
     async def close(self) -> None:
+        await self.repository.close()
         await self.database.close()
 
 

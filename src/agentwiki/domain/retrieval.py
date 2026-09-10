@@ -9,7 +9,7 @@ from agentwiki.domain.documents import DocumentPath, Frontmatter
 from agentwiki.domain.tags import TagAliases
 
 RetrievalStrategy = Literal["recent", "keyword", "hybrid", "recent_hybrid"]
-MatchSource = Literal["exact", "keyword", "semantic", "recency"]
+MatchSource = Literal["exact", "keyword", "semantic", "graph", "recency"]
 
 
 class ContextQuery(BaseModel):
@@ -39,6 +39,20 @@ class SearchCandidate(BaseModel):
     score: float
 
 
+class RelatedDocument(BaseModel):
+    """A directly related document in the derived Wiki graph."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    path: str
+    title: str
+    relation_type: str
+    direction: Literal["outgoing", "incoming"]
+    resolution_status: Literal["resolved", "unresolved"]
+    source_section: str | None = None
+    context: str | None = None
+
+
 class IndexedChunk(BaseModel):
     """A deterministic Markdown fragment persisted in the derived index."""
 
@@ -49,6 +63,7 @@ class IndexedChunk(BaseModel):
     section: str
     content: str
     source_hash: str
+    embedding_hash: str = ""
 
 
 class Evidence(BaseModel):
@@ -62,6 +77,7 @@ class Evidence(BaseModel):
     match_sources: tuple[MatchSource, ...]
     modified_at: datetime
     frontmatter: Frontmatter
+    related: tuple[RelatedDocument, ...] = ()
 
 
 class ContextResult(BaseModel):

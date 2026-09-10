@@ -40,6 +40,7 @@ class WikiDocument(BaseModel):
     frontmatter: Frontmatter = Field(default_factory=dict)
     modified_at_ns: int
     size: int
+    content_hash: str = ""
 
     @property
     def title(self) -> str:
@@ -56,6 +57,8 @@ class DocumentDescriptor(NamedTuple):
 class DocumentFingerprint(NamedTuple):
     modified_at_ns: int
     size: int
+    content_hash: str = ""
+    document_id: str | None = None
 
 
 class DocumentReadFailure(NamedTuple):
@@ -68,5 +71,8 @@ class SyncReport(BaseModel):
 
     indexed: int = 0
     removed: int = 0
+    moved: int = 0
     unchanged: int = 0
+    vectors_ready: int = 0
+    vectors_pending: int = 0
     degraded: tuple[str, ...] = ()

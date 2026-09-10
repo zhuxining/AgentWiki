@@ -10,7 +10,7 @@ AgentWiki 是本地 Markdown Wiki 的搜查与治理层。它负责：
 - 保持 SQLite 投影可删除、可增量同步和可全量重建。
 
 Agent 原生工具负责已知路径读取、创建、编辑、移动和删除。HTTP API、云同步、Web UI、
-知识图谱、查询 LLM 和操作审计不属于当前范围。
+查询 LLM 和操作审计不属于当前范围。图谱仅表示 Markdown 中明确声明的文档关系。
 
 ## 2. 数据与检索
 
@@ -20,12 +20,45 @@ Markdown 正文和 YAML Frontmatter 是事实源。`agentwiki/context.yaml` 与
 索引保存：
 
 - 文档路径、标题、Frontmatter、真实 `mtime_ns` 和大小；
+- 文档稳定身份、内容 checksum、同步状态和失败原因；
 - 按 Markdown 标题层级切分的有界片段；
-- 片段级 FTS5 投影和可选向量；
+- 片段级 FTS5 投影和可选的 sqlite-vec 向量 manifest；
+- 从内部链接和 `relations` Frontmatter 派生的一跳文档关系；
 - 用于变化检测的文件指纹。
 
-查询前执行增量确认，只解析变化文档并清理删除投影。rebuild 不得用执行时间覆盖文件修改
-时间。“最近活动”因此表示当前仍存在文档的真实修改时间，不是索引时间或审计历史。
+图谱不自动抽取实体。支持 `[[doc]]`、相对 Markdown 链接以及：
+
+```yaml
+relations:
+  - type: depends_on
+    target: architecture/retrieval.md
+```
+
+目标暂不存在的边保留为 `unresolved`，目标出现后在同步时解析；关联证据会保留关系来源章节
+和原文上下文，便于 Agent 回读。图谱是 SQLite 派生投影，不会成为 Markdown 正文的事实源；
+检索证据最多附带一跳关联文档。非法 `relations` 声明不阻断其他文档索引，但会进入 `degraded`
+诊断。
+
+语义索引由 `wiki_vector_manifest` 和 sqlite-vec 物理表组成，按 chunk embedding hash、模型和
+维度校验。embedding hash 包含标题、标签、章节和正文：文档修改时，未改变语义输入的
+chunk 直接复用旧向量，只有新增或改变的 chunk 重新 embedding。模型变化会清理旧模型的
+物理表和 manifest，并在下一次查询前重建；sqlite-vec 或 embedding 不可用时保留 FTS5，
+并在检索结果中报告降级原因。
+
+文档的 FTS5 和图谱投影先提交，向量 manifest 随后以 `pending` 状态提交，向量计算在后台
+完成后以当前文档 content hash 做栅栏，再原子替换为 `ready`；计算失败保留 `error` 状态，
+不会撤销 Markdown 或关键词索引。首次创建向量表时检索会等待这一轮初始任务，后续文档变更
+保持异步，语义候选只读取模型、hash 和状态均匹配的 ready 向量。进程关闭或异常退出遗留的
+`pending` 会在下次 runtime 启动时恢复为可重试状态，避免后台任务丢失后永久阻塞同步。
+
+查询前执行增量确认，只解析变化文档并清理删除投影。mtime/size 用于快速筛选，读取后计算
+content hash；唯一 hash 配对的删除+新增会保留文档稳定身份并识别为移动。解析失败时保留
+已有有效投影，新文档则只报告失败。rebuild 不得用执行时间覆盖文件修改时间。“最近活动”
+因此表示当前仍存在文档的真实修改时间，不是索引时间或审计历史。
+
+SQLite 仅是 Markdown 的镜像索引，不执行旧 schema 的逐列迁移。索引文件使用
+`PRAGMA user_version` 标记当前 schema；发现已有索引版本不匹配时，直接删除 SQLite、WAL 和
+SHM 文件并创建新 schema，随后由增量同步从 Markdown 重新生成，原始文档不受影响。
 
 普通查询并发取得路径/标题、关键词和语义候选，再使用排名融合；同一文档最多返回两个片段。
 语义依赖不可用时降级为关键词查询，并在结果中说明原因。带近期意图的主题查询额外加入

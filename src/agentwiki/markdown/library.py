@@ -1,5 +1,6 @@
 """Read-only, path-safe access to a local Markdown Wiki."""
 
+from hashlib import sha256
 from pathlib import Path
 
 import yaml
@@ -63,6 +64,7 @@ class MarkdownLibrary:
             frontmatter=frontmatter,
             modified_at_ns=descriptor.modified_at_ns,
             size=descriptor.size,
+            content_hash=sha256(raw.encode("utf-8")).hexdigest(),
         )
 
     def descriptor(self, document_path: DocumentPath) -> DocumentDescriptor:

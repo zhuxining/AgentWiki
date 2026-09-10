@@ -42,15 +42,33 @@ metadata_filters: object | null
       "score": 0.032522,
       "match_sources": ["keyword", "semantic", "recency"],
       "modified_at": "2026-09-10T08:00:00Z",
-      "frontmatter": {}
+      "frontmatter": {},
+      "related": [
+        {
+          "path": "architecture/retrieval.md",
+          "title": "检索架构",
+          "relation_type": "depends_on",
+          "direction": "outgoing",
+          "resolution_status": "resolved",
+          "source_section": "架构",
+          "context": "该文档依赖检索架构。"
+        }
+      ]
     }
   ],
   "truncated": false
 }
 ```
 
-`strategy` 为 `recent`、`keyword`、`hybrid` 或 `recent_hybrid`。`degraded` 会说明语义不可用
-或具体文档索引失败。结果是候选证据；形成结论前应使用原生工具读取关键原文。
+`strategy` 为 `recent`、`keyword`、`hybrid` 或 `recent_hybrid`。`related` 是最多 5 条的一跳
+入边或出边关联，包含关系来源的 `source_section` 和 `context`；目标不存在时仍会返回
+`unresolved` 关系及其目标路径。`degraded` 会说明语义不可用、具体文档索引失败或非法
+Frontmatter 关系声明。结果是候选证据；形成结论前应使用原生工具读取关键原文。
+
+语义向量按 chunk 维护 `pending`、`ready`、`error` 状态。首次建立向量索引时工具会等待初始
+同步，后续 Markdown 变更先返回关键词/图谱结果，向量在后台更新；模型切换会自动丢弃旧模型
+向量并重建。若上一个进程在向量任务完成前退出，下一次 runtime 启动会恢复遗留的 pending
+任务并重新排队。
 
 ## `get_wiki_rules`
 
