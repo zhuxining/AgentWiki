@@ -1,0 +1,15 @@
+{"id":"zh-config-file-location","query":"配置文件位置","category":"keyword","difficulty":"easy","relevance":[{"path":"reference/configuration.md","section":"配置说明 / 配置文件位置","grade":3}]}
+{"id":"zh-config-fields","query":"索引路径","category":"keyword","difficulty":"easy","relevance":[{"path":"reference/configuration.md","section":"配置说明 / 配置字段","grade":3}]}
+{"id":"zh-config-embedding-model","query":"embedding_model 语义检索","category":"keyword","difficulty":"medium","relevance":[{"path":"reference/configuration.md","section":"配置说明 / 配置字段","grade":3}]}
+{"id":"zh-config-changelog","query":"最近 配置 变化","category":"recent","difficulty":"medium","relevance":[{"path":"reference/configuration.md","grade":3}]}
+{"id":"zh-trouble-tokenizer","query":"二元组 FTS5 分词","category":"keyword","difficulty":"medium","relevance":[{"path":"operations/troubleshooting.md","section":"故障排查 / 中文检索无结果","grade":3}]}
+{"id":"zh-trouble-recall","query":"候选池 去重 召回率","category":"keyword","difficulty":"hard","relevance":[{"path":"operations/troubleshooting.md","section":"故障排查 / 召回率过低","grade":3}]}
+{"id":"zh-trouble-rebuild","query":"索引 重建","category":"keyword","difficulty":"medium","relevance":[{"path":"operations/troubleshooting.md","section":"故障排查 / 检索结果异常","grade":2}]}
+{"id":"zh-decision-rebuildable","query":"索引 派生投影 重建","category":"keyword","difficulty":"medium","relevance":[{"path":"decisions/index-strategy.md","section":"索引策略 / 为什么索引可重建","grade":3}]}
+{"id":"zh-decision-optional","query":"语义检索 可选依赖","category":"keyword","difficulty":"hard","relevance":[{"path":"decisions/index-strategy.md","section":"索引策略 / 语义检索是可选依赖","grade":3}]}
+{"id":"zh-cross-document","query":"索引策略 相关文档","category":"cross_document","difficulty":"medium","relevance":[{"path":"decisions/index-strategy.md","section":"索引策略 / 相关文档","grade":3},{"path":"decisions/index-strategy.md","section":"索引策略 / 语义检索是可选依赖","grade":2}]}
+{"id":"zh-tag-filter-rollback","query":"回滚","category":"filter","difficulty":"medium","relevance":[{"path":"guides/deploy-runbook.md","section":"发布手册 / 回滚流程","grade":3}]}
+{"id":"zh-scope-filter","query":"","scope":"guides","category":"filter","difficulty":"easy","relevance":[{"path":"guides/onboarding.md","section":"上手指南 / 上手步骤","grade":3},{"path":"guides/deploy-runbook.md","section":"发布手册 / 回滚流程","grade":2}]}
+{"id":"zh-recent-empty-query","query":"","category":"recent","difficulty":"easy","relevance":[{"path":"guides/deploy-runbook.md","grade":2},{"path":"guides/onboarding.md","grade":2}]}
+{"id":"zh-long-document","query":"为什么索引可重建","category":"long_document","difficulty":"medium","relevance":[{"path":"decisions/index-strategy.md","section":"索引策略 / 为什么索引可重建","grade":3}]}
+{"id":"zh-no-answer","query":"Kubernetes etcd 备份","category":"no_answer","difficulty":"medium","expected_no_answer":true,"relevance":[]}

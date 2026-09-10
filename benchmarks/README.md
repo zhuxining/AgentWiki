@@ -66,7 +66,26 @@ git -C /private/tmp/agentwiki-public-corpus/mdn-content \
 
 - [`mdn-smoke.jsonl`](queries/mdn-smoke.jsonl)：全量英文 MDN smoke 集；
 - [`mdn-global-objects-smoke.jsonl`](queries/mdn-global-objects-smoke.jsonl)：JavaScript
-  Global Objects 子集，用于快速比较 keyword 和 hybrid。
+  Global Objects 子集，用于快速比较 keyword 和 hybrid；
+- [`zh-team-wiki.jsonl`](queries/zh-team-wiki.jsonl)：中文团队 Wiki 集。**该集带 `section`
+  级标注**，覆盖 `keyword`、`cross_document`、`recent`、`filter`、`long_document` 和
+  `no_answer`，用于验证中文检索链路；语料需要自备（见下节）。
+
+### 中文查询集的能力边界
+
+中文关键词检索按 CJK 二元组（bigram）召回，并要求**查询的每个词元都在文档中被逐字找到**。
+因此中文查询应写成**短的、与文档措辞一致的主题词**（如「配置文件位置」、「候选池 去重
+召回率」），而不是整句自然语言（如「配置文件放在哪里」）。
+
+已覆盖的字符系统：Han（含常用扩展区）、假名、谚文、注音、泰/老/藏/缅/高棉；单字与多字
+子串（如「生」「令牌」「エンジン」）均可命中。**仍未覆盖**的是语义等价：
+
+- **整句提问**（如「如何更新配置」）会因「如何」不在文档中而整体不命中；
+- **近似措辞**（如文档写「变更」，查询写「变更管理」）也会不命中——关键词路不做词干化、
+  同义词扩展或停用词过滤。
+
+短语语义只能证明「字面出现」，无法在没有分词与查询改写的情况下推断语义等价。正式质量集
+若要覆盖自然语言提问，需要先引入中文分词或查询改写，届时应在本段更新边界描述并补相应 qrels。
 
 每个查询应包含：
 
@@ -98,6 +117,10 @@ git -C /private/tmp/agentwiki-public-corpus/mdn-content \
 `section` 为空时按文档路径匹配；填写章节时按“路径 + AgentWiki 实际返回的完整标题层级”
 匹配，例如 `Authentication / Tokens`。允许 AgentWiki 返回同一文档的两个片段，因此评分器
 会避免同一个文档级标注在 nDCG 中重复计分。
+
+**qrels 必须至少包含 section 级标注**：只有 path 级标注时 `recall@k` 与
+`document_recall@k` 恒等，无法验证「章节级证据」这一核心设计。英文 smoke 集目前仍是
+path-only，属于已知欠缺；`zh-team-wiki.jsonl` 已按 section 级标注。
 
 无答案查询必须显式设置：
 
@@ -216,6 +239,30 @@ hybrid 的 653.1 秒包含模型下载/加载和首次向量化，不能与 keyw
 阶段比较。这个 smoke 结果显示 hybrid 在 3 条可回答查询上排序更好，但无答案查询仍会
 返回最近似结果，说明当前检索没有 semantic similarity threshold；这是后续产品策略和
 性能优化的候选问题，不应在 benchmark 文档中当作已解决能力。
+
+### 中文团队 Wiki（section 级标注）
+
+用 `queries/zh-team-wiki.jsonl` 对一份自建的 5 篇中文 Wiki（含 `AGENTWIKI.md`、
+decisions/guides/reference/operations 四类目录）运行 keyword 模式：
+
+| 指标 | 结果 |
+| --- | ---: |
+| 文档 / chunk | 5 / 11 |
+| rebuild | 14 ms |
+| 查询 p50 / p95 | 1.9 ms / 2.4 ms |
+| Recall@1 / @3 / @5 | 0.929 / 1.000 / 1.000 |
+| recall_strict@5 | 0.857 |
+| MRR@5 | 0.964 |
+| nDCG@5 | 0.947 |
+| section_precision@5 | 0.898 |
+| 无答案误报率 | 0 |
+
+覆盖类别：`keyword`、`cross_document`、`recent`、`filter`、`long_document`、`no_answer`。
+这只是 14 条可回答查询的小规模集，用于回归验证中文链路，不作为产品质量门槛。
+
+**延迟口径**：`latency_ms` 包住 `get_wiki_context`，其中包含查询前的增量确认
+（`ensure_fresh`）。小语料下增量确认已由目录级缓存短路，因此该值接近纯检索耗时；
+在大语料上应把它理解为「增量确认 + 检索」，不要单独归因于检索。
 
 ## 7. 下一次复现清单
 

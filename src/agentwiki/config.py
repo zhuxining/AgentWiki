@@ -4,11 +4,24 @@ import json
 from json import JSONDecodeError
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 DEFAULT_CONFIG_PATH = Path("~/.agentwiki/config.json")
 DEFAULT_INDEX_PATH = Path("~/.agentwiki/agentwiki.sqlite3")
 DEFAULT_DOCUMENT_ROOT = Path("~/AgentWiki")
+# Minimum cosine similarity for a vector hit to count. Vectors are L2-normalized and
+# sqlite-vec reports L2 distance, so this is directly comparable across queries.
+#
+# Calibrated against the default multilingual model on a small Chinese corpus: true
+# paraphrases scored 0.34-0.58 while an unrelated query peaked at 0.10. 0.30 keeps every
+# true paraphrase and still rejects the unrelated query. The value is model-dependent -
+# re-measure before changing the embedding model.
+DEFAULT_MIN_SIMILARITY = 0.30
+# A multilingual model, because the searches this layer serves are routinely mixed
+# Chinese/English: `bge-small-zh` is stronger on Chinese but weaker on English, and
+# fastembed's English-only models cannot embed Chinese at all. 384 dimensions keeps the
+# vector table small (the model is ~220 MB).
+DEFAULT_EMBEDDING_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 
 
 class Settings(BaseModel):
@@ -18,7 +31,8 @@ class Settings(BaseModel):
 
     document_root: Path = DEFAULT_DOCUMENT_ROOT
     index_path: Path = DEFAULT_INDEX_PATH
-    embedding_model: str | None = None
+    embedding_model: str | None = DEFAULT_EMBEDDING_MODEL
+    min_similarity: float = Field(default=DEFAULT_MIN_SIMILARITY, ge=0.0, le=1.0)
 
     @field_validator("document_root", "index_path", mode="before")
     @classmethod
@@ -45,7 +59,7 @@ class Settings(BaseModel):
                 json.dumps(
                     {
                         "document_root": str(DEFAULT_DOCUMENT_ROOT),
-                        "embedding_model": None,
+                        "embedding_model": DEFAULT_EMBEDDING_MODEL,
                     },
                     ensure_ascii=False,
                     indent=2,

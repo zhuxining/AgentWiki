@@ -1,8 +1,8 @@
 """Task-oriented Wiki evidence retrieval."""
 
 import asyncio
+from collections.abc import Awaitable, Callable
 import operator
-from pathlib import PurePosixPath
 import re
 import sqlite3
 
@@ -15,10 +15,16 @@ from agentwiki.domain.retrieval import (
     SearchCandidate,
     timestamp_from_ns,
 )
+from agentwiki.domain.scope import normalize_scope
 from agentwiki.services.ports import FreshnessSynchronizer, SearchRepository, TagRulesProvider
 
-_RECENT_INTENT = re.compile(
-    r"(?:最近|近期|新近|更新|变化|变更|活动|recent|latest|changed|updated)",
+_PURE_RECENT_QUERY = re.compile(
+    r"^(?:最近|近期|新近|最新|刚刚|recent|recently|latest|newest|new)$",
+    re.IGNORECASE,
+)
+_RECENT_SIGNAL = re.compile(
+    r"(?:最近|近期|新近|最新|刚刚|更新|变化|变更|活动|recent|recently|latest|newest|"
+    r"changed|updated)",
     re.IGNORECASE,
 )
 _SOURCE_ORDER: tuple[MatchSource, ...] = (
@@ -28,6 +34,51 @@ _SOURCE_ORDER: tuple[MatchSource, ...] = (
     "graph",
     "recency",
 )
+# Source weights for reciprocal rank fusion. Content sources outrank recency, and
+# exact path/title matches outrank broad keyword recall.
+_SOURCE_WEIGHTS: dict[MatchSource, float] = {
+    "exact": 1.2,
+    "keyword": 1.0,
+    "semantic": 1.0,
+    "graph": 0.4,
+    "recency": 0.3,
+}
+_RRF_K = 60
+# The graph source scans every edge, so it only runs when the query actually asks for
+# a relationship rather than for content.
+_GRAPH_INTENT = re.compile(
+    r"(?:依赖|引用|参见|相关|关联|关系|上游|下游|depends?_?on|links?_?to|related|relations?|references?)",
+    re.IGNORECASE,
+)
+# Guarded sources degrade to a warning instead of failing the whole retrieval.
+_DEGRADABLE_ERRORS = (ImportError, OSError, RuntimeError, TypeError, ValueError, sqlite3.Error)
+# Evidence snippets must stay well inside a model context window per document.
+_SNIPPET_CHARS = 700
+
+
+def _snippet(candidate: SearchCandidate, query: str) -> str:
+    """Return a bounded snippet that keeps the matched wording visible.
+
+    A chunk whose match sits past the cut-off would otherwise be returned as evidence
+    that does not contain the query at all, so the window is centred on the first
+    match when one is found.
+    """
+    normalized = " ".join(candidate.content.split())
+    if not normalized or not query:
+        return _truncate(normalized)
+    needle = query.strip().casefold()
+    position = normalized.casefold().find(needle) if needle else -1
+    if position < 0 or position + len(needle) <= _SNIPPET_CHARS:
+        return _truncate(normalized)
+    start = max(0, position - (_SNIPPET_CHARS - len(needle)) // 2)
+    window = normalized[start : start + _SNIPPET_CHARS]
+    prefix = "…" if start > 0 else ""
+    suffix = "…" if start + _SNIPPET_CHARS < len(normalized) else ""
+    return f"{prefix}{window.strip()}{suffix}"
+
+
+def _truncate(text: str) -> str:
+    return text if len(text) <= _SNIPPET_CHARS else text[:_SNIPPET_CHARS]
 
 
 class RetrievalService:
@@ -44,20 +95,26 @@ class RetrievalService:
     async def get_wiki_context(self, query: ContextQuery) -> ContextResult:
         normalized = query.model_copy(
             update={
-                "scope": self._scope(query.scope),
+                "scope": normalize_scope(query.scope),
                 "tag_aliases": self.tag_rules.get_tag_aliases() if self.tag_rules else {},
             }
         )
         sync = await self.synchronizer.ensure_fresh()
-        wait_for_vectors = getattr(self.repository, "wait_for_initial_vector_sync", None)
-        if wait_for_vectors is not None:
-            await wait_for_vectors()
+        await self.repository.wait_for_initial_vector_sync()
         degraded = list(sync.degraded)
-        has_recent_intent = bool(_RECENT_INTENT.search(normalized.query))
-        topic = _RECENT_INTENT.sub(" ", normalized.query)
-        topic = " ".join(topic.split())
+        query_text = normalized.query.strip()
+        # Only a query that is nothing but a recency word asks for "what changed lately".
+        # Words like 更新/变更 also carry subject matter ("更新流程", "变更管理"), so they
+        # bias ranking towards recency but stay in the topic instead of being stripped.
+        wants_recent_only = bool(_PURE_RECENT_QUERY.fullmatch(query_text))
+        has_recent_intent = bool(_RECENT_SIGNAL.search(query_text))
+        topic = " ".join(
+            _PURE_RECENT_QUERY.sub(" ", query_text).split()
+        ) if wants_recent_only else query_text
 
-        if not normalized.query.strip() or (has_recent_intent and not topic):
+        if not query_text or wants_recent_only or not topic:
+            # One row per document (newest chunk), so ask for one extra to detect
+            # truncation without letting a single long document fill the answer.
             candidates = await self.repository.recent_candidates(
                 normalized, candidate_limit=normalized.limit + 1
             )
@@ -70,130 +127,182 @@ class RetrievalService:
                 degraded=tuple(degraded),
                 results=tuple(evidence),
                 truncated=len(candidates) > normalized.limit,
+                matched=bool(evidence),
             )
 
         exact_query = normalized.model_copy(update={"query": topic})
-        search_query = normalized.model_copy(
-            update={"query": self._expand_tag_terms(topic, normalized.tag_aliases)}
-        )
+        # Tag aliases are not spliced into the query text: keyword matching requires every
+        # query token to be present, so adding alias spellings only narrows recall. Aliases
+        # still apply to tag *filtering* through `tag_aliases` in SQL.
+        search_query = normalized.model_copy(update={"query": topic})
         candidate_limit = max(search_query.limit * 4, 20)
+        repository = self.repository
         async with asyncio.TaskGroup() as group:
             exact_task = group.create_task(
-                self.repository.exact_candidates(exact_query, candidate_limit=candidate_limit)
+                self._guard(
+                    "exact",
+                    lambda q, limit: repository.exact_candidates(q, candidate_limit=limit),
+                    exact_query,
+                    candidate_limit,
+                )
             )
             keyword_task = group.create_task(
-                self.repository.keyword_candidates(search_query, candidate_limit=candidate_limit)
+                self._guard(
+                    "keyword",
+                    lambda q, limit: repository.keyword_candidates(q, candidate_limit=limit),
+                    search_query,
+                    candidate_limit,
+                )
             )
-            graph_task = group.create_task(
-                self._graph(search_query, candidate_limit)
+            graph_task = (
+                group.create_task(
+                    self._guard(
+                        "graph",
+                        lambda q, limit: repository.graph_candidates(q, candidate_limit=limit),
+                        search_query,
+                        candidate_limit,
+                    )
+                )
+                if _GRAPH_INTENT.search(topic)
+                else None
             )
             semantic_task = (
-                group.create_task(self._semantic(search_query, candidate_limit))
-                if self.repository.semantic_available
+                group.create_task(
+                    self._guard(
+                        "semantic",
+                        lambda q, limit: repository.semantic_candidates(q, candidate_limit=limit),
+                        search_query,
+                        candidate_limit,
+                    )
+                )
+                if repository.semantic_available
                 else None
             )
 
+        sources: dict[MatchSource, list[SearchCandidate]] = {}
+        for source, task in (
+            ("exact", exact_task),
+            ("keyword", keyword_task),
+            ("graph", graph_task),
+        ):
+            if task is None:
+                sources[source] = []
+                continue
+            values, error = task.result()
+            sources[source] = values
+            if error:
+                degraded.append(error)
         semantic: list[SearchCandidate] = []
-        semantic_error: str | None = None
         if semantic_task is not None:
             semantic, semantic_error = semantic_task.result()
+            sources["semantic"] = semantic
             if semantic_error:
                 degraded.append(semantic_error)
         else:
             degraded.append("semantic_unavailable")
 
-        ranked = self._fuse(
-            exact_task.result(),
-            keyword_task.result(),
-            semantic,
-            graph_task.result(),
-            include_recency=has_recent_intent,
-        )
-        selected, truncated = self._select(ranked, search_query.limit)
+        has_content = any(sources.values())
+        if not has_content:
+            # Distinguish "nothing cleared the bar" from "a dependency was unavailable";
+            # `matched=False` on the result is the machine-readable form of this.
+            degraded.append("no_content_match")
+
+        ranked = self._fuse(sources, include_recency=has_recent_intent)
+        selected, truncated = self._select(ranked, search_query.limit, query=topic)
         selected = await self._attach_related(selected)
-        strategy: RetrievalStrategy
-        if has_recent_intent:
-            strategy = "recent_hybrid"
-        else:
-            strategy = "hybrid" if semantic and semantic_error is None else "keyword"
         return ContextResult(
             query=query.query,
             scope=normalized.scope,
-            strategy=strategy,
+            strategy=self._strategy(sources, has_recent_intent),
             degraded=tuple(dict.fromkeys(degraded)),
             results=tuple(selected),
             truncated=truncated,
+            matched=bool(selected),
         )
 
+    @staticmethod
+    def _strategy(
+        sources: dict[MatchSource, list[SearchCandidate]], has_recent_intent: bool
+    ) -> RetrievalStrategy:
+        """Name the strategy from the sources that actually contributed results."""
+        content = {source for source, values in sources.items() if values}
+        if has_recent_intent:
+            return "recent_hybrid" if content else "recent"
+        if "semantic" in content and len(content) > 1:
+            return "hybrid"
+        return "keyword"
+
+    async def _guard(
+        self,
+        source: str,
+        call: Callable[[ContextQuery, int], Awaitable[list[SearchCandidate]]],
+        query: ContextQuery,
+        candidate_limit: int,
+    ) -> tuple[list[SearchCandidate], str | None]:
+        """Run one retrieval source, degrading to a warning instead of raising.
+
+        Any single source failing (a transient ``database is locked``, a missing
+        extension, a malformed query) must lower the strategy, never abort the call.
+        """
+        try:
+            return await call(query, candidate_limit), None
+        except _DEGRADABLE_ERRORS as exc:
+            return [], f"{source}_unavailable: {exc}"
+
     async def _attach_related(self, evidence: list[Evidence]) -> list[Evidence]:
-        related_query = getattr(self.repository, "related_documents", None)
-        if related_query is None or not evidence:
+        if not evidence:
             return evidence
-        related = await related_query(tuple(item.path for item in evidence), limit=5)
+        related = await self.repository.related_documents(
+            tuple(item.path for item in evidence), limit=5
+        )
         return [
             item.model_copy(update={"related": related.get(item.path, ())})
             for item in evidence
         ]
 
-    async def _graph(self, query: ContextQuery, candidate_limit: int) -> list[SearchCandidate]:
-        graph_query = getattr(self.repository, "graph_candidates", None)
-        if graph_query is None:
-            return []
-        return await graph_query(query, candidate_limit=candidate_limit)
-
-    @staticmethod
-    def _expand_tag_terms(query: str, aliases: dict[str, tuple[str, ...]]) -> str:
-        terms = [query]
-        lowered = query.casefold()
-        for canonical, values in aliases.items():
-            spellings = (canonical, *values)
-            if any(spelling.casefold() in lowered for spelling in spellings):
-                terms.extend(spellings)
-        return " ".join(dict.fromkeys(term for term in terms if term))
-
-    async def _semantic(
-        self, query: ContextQuery, candidate_limit: int
-    ) -> tuple[list[SearchCandidate], str | None]:
-        try:
-            return (
-                await self.repository.semantic_candidates(
-                    query, candidate_limit=candidate_limit
-                ),
-                None,
-            )
-        except (ImportError, OSError, RuntimeError, TypeError, ValueError, sqlite3.Error) as exc:
-            return [], f"semantic_unavailable: {exc}"
-
     @staticmethod
     def _fuse(
-        exact: list[SearchCandidate],
-        keyword: list[SearchCandidate],
-        semantic: list[SearchCandidate],
-        graph: list[SearchCandidate],
+        sources_by_name: dict[MatchSource, list[SearchCandidate]],
         *,
         include_recency: bool,
     ) -> list[tuple[SearchCandidate, float, set[MatchSource]]]:
+        """Weighted reciprocal rank fusion.
+
+        Rank position is the only signal every source can produce, but the sources are
+        not equally trustworthy, so each contributes with its own weight. Recency is
+        additionally ranked per document: every chunk of a document shares
+        ``modified_at_ns``, and ranking chunks would give a long document many times
+        the recency weight of a short one.
+        """
         scores: dict[str, float] = {}
-        sources: dict[str, set[MatchSource]] = {}
+        matched: dict[str, set[MatchSource]] = {}
         candidates: dict[str, SearchCandidate] = {}
-        for source, values in (
-            ("exact", exact),
-            ("keyword", keyword),
-            ("semantic", semantic),
-            ("graph", graph),
-        ):
+        for source, values in sources_by_name.items():
+            weight = _SOURCE_WEIGHTS[source]
             for rank, candidate in enumerate(values, start=1):
-                candidates[candidate.chunk_id] = candidate
-                scores[candidate.chunk_id] = scores.get(candidate.chunk_id, 0.0) + 1 / (60 + rank)
-                sources.setdefault(candidate.chunk_id, set()).add(source)
+                candidates.setdefault(candidate.chunk_id, candidate)
+                scores[candidate.chunk_id] = scores.get(candidate.chunk_id, 0.0) + weight / (
+                    _RRF_K + rank
+                )
+                matched.setdefault(candidate.chunk_id, set()).add(source)
         if include_recency:
-            newest = sorted(candidates.values(), key=lambda item: item.modified_at_ns, reverse=True)
-            for rank, candidate in enumerate(newest, start=1):
-                scores[candidate.chunk_id] += 1 / (60 + rank)
-                sources.setdefault(candidate.chunk_id, set()).add("recency")
+            latest_by_path: dict[str, int] = {}
+            for candidate in candidates.values():
+                path = candidate.path.value
+                latest_by_path[path] = max(
+                    latest_by_path.get(path, 0), candidate.modified_at_ns
+                )
+            by_recency = sorted(
+                latest_by_path.items(), key=operator.itemgetter(1), reverse=True
+            )
+            rank_by_path = {path: rank for rank, (path, _) in enumerate(by_recency, start=1)}
+            for chunk_id, candidate in candidates.items():
+                rank = rank_by_path[candidate.path.value]
+                scores[chunk_id] += _SOURCE_WEIGHTS["recency"] / (_RRF_K + rank)
+                matched[chunk_id].add("recency")
         return sorted(
             (
-                (candidate, scores[chunk_id], sources[chunk_id])
+                (candidate, scores[chunk_id], matched[chunk_id])
                 for chunk_id, candidate in candidates.items()
             ),
             key=operator.itemgetter(1),
@@ -205,27 +314,20 @@ class RetrievalService:
         cls,
         ranked: list[tuple[SearchCandidate, float, set[MatchSource]]],
         limit: int,
+        *,
+        query: str = "",
     ) -> tuple[list[Evidence], bool]:
         selected: list[Evidence] = []
         per_document: dict[str, int] = {}
+        eligible = 0
         for candidate, score, sources in ranked:
             path = candidate.path.value
             if per_document.get(path, 0) >= 2:
                 continue
             per_document[path] = per_document.get(path, 0) + 1
-            selected.append(cls._evidence(candidate, score, sources))
-            if len(selected) == limit:
-                break
-        eligible = sum(
-            1
-            for index, (candidate, _, _) in enumerate(ranked)
-            if sum(
-                1
-                for previous, _, _ in ranked[:index]
-                if previous.path.value == candidate.path.value
-            )
-            < 2
-        )
+            eligible += 1
+            if len(selected) < limit:
+                selected.append(cls._evidence(candidate, score, sources, query=query))
         return selected, eligible > len(selected)
 
     @classmethod
@@ -235,31 +337,18 @@ class RetrievalService:
     @staticmethod
     def _evidence(
         candidate: SearchCandidate,
-        score: float,
+        rank_score: float,
         sources: set[MatchSource],
+        *,
+        query: str = "",
     ) -> Evidence:
-        snippet = " ".join(candidate.content.split())
-        if len(snippet) > 700:
-            snippet = f"{snippet[:697].rstrip()}…"
         return Evidence(
             path=candidate.path.value,
             title=candidate.title,
             section=candidate.section,
-            snippet=snippet,
-            score=round(score, 6),
+            snippet=_snippet(candidate, query),
+            rank_score=round(rank_score, 6),
             match_sources=tuple(source for source in _SOURCE_ORDER if source in sources),
             modified_at=timestamp_from_ns(candidate.modified_at_ns),
             frontmatter=candidate.frontmatter,
         )
-
-    @staticmethod
-    def _scope(value: str) -> str:
-        if value.startswith(("/", "\\")):
-            raise ValueError("scope must stay inside the Wiki root")
-        normalized = value.replace("\\", "/").strip("/")
-        if not normalized or normalized == ".":
-            return ""
-        path = PurePosixPath(normalized)
-        if path.is_absolute() or ".." in path.parts:
-            raise ValueError("scope must stay inside the Wiki root")
-        return path.as_posix()

@@ -30,7 +30,7 @@ def _evidence(path: str, section: str, *, modified: int = 1) -> Evidence:
         title=path,
         section=section,
         snippet="evidence",
-        score=1.0,
+        rank_score=1.0,
         match_sources=("keyword",),
         modified_at=datetime.fromtimestamp(modified, tz=UTC),
         frontmatter={},
@@ -85,13 +85,14 @@ def test_benchmark_query_jsonl_and_corpus_manifest(tmp_path) -> None:
     root.mkdir()
     (root / "guide.md").write_text("SQLite\n", encoding="utf-8")
     (root / "AGENTWIKI.md").write_text("Reserved\n", encoding="utf-8")
-    (root / "agentwiki").mkdir()
-    (root / "agentwiki" / "guide.md").write_text("Reserved\n", encoding="utf-8")
+    (root / "notes").mkdir()
+    (root / "notes" / "extra.md").write_text("More\n", encoding="utf-8")
     (root / "BENCHMARK_VERSION").write_text("v1\n", encoding="utf-8")
     queries = load_queries(query_path)
     manifest = inspect_corpus(root)
     assert queries[0].id == "q1"
-    assert manifest.document_count == 1
+    # AGENTWIKI.md is the reserved control file; everything else is corpus content.
+    assert manifest.document_count == 2
     assert manifest.version == "v1"
     assert len(manifest.sha256) == 64
 
@@ -124,7 +125,9 @@ async def test_run_benchmark_uses_real_runtime_and_writes_report_data(tmp_path) 
     )
     report = await run_benchmark(root, (query,), mode="keyword", embedding_model=None)
     assert report.index.documents == 1
-    assert report.index.chunks == 2
+    # Only the section that actually carries content is indexed; the heading-only
+    # prefix is not emitted as an empty chunk.
+    assert report.index.chunks == 1
     assert report.quality["recall@1"] == pytest.approx(1.0)
     assert report.quality["category.keyword.recall@1"] == pytest.approx(1.0)
     assert "# AgentWiki benchmark" in render_markdown(report)

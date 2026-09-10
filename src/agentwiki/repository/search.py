@@ -4,8 +4,6 @@ import asyncio
 from datetime import date, datetime
 import json
 import math
-import operator
-import re
 import sqlite3
 from time import time_ns
 from typing import Literal, TypeGuard, cast
@@ -18,12 +16,17 @@ from agentwiki.domain.retrieval import (
     RelatedDocument,
     SearchCandidate,
 )
-from agentwiki.domain.tags import tag_matches_filter
+from agentwiki.domain.text import (
+    analyze,
+    query_expression,
+    query_terms,
+    relaxed_query_expression,
+    simple_tokens,
+)
 from agentwiki.indexing.graph import GraphEdgeDraft
 from agentwiki.repository.embeddings import EmbeddingProvider
 from agentwiki.repository.sqlite import SQLiteDatabase
 
-_TOKEN_RE = re.compile(r"[\w-]+", re.UNICODE)
 VectorSyncState = Literal["ready", "pending", "error", "unavailable", "none"]
 
 
@@ -38,6 +41,8 @@ class SQLiteSearchRepository:
         self._vector_tasks: set[asyncio.Task[None]] = set()
         self._vector_tasks_by_document: dict[str, asyncio.Task[None]] = {}
         self._write_lock = asyncio.Lock()
+        self._task_lock = asyncio.Lock()
+        self._vector_closed = False
         self._initial_vector_sync_required = False
 
     @property
@@ -58,8 +63,12 @@ class SQLiteSearchRepository:
         )
 
     async def _recover_pending_vectors(self) -> None:
-        """Make pending work from a previous process eligible for retry."""
-        await self.database.connection.execute(
+        """Make pending work from a previous process eligible for retry.
+
+        Reads the updated row count first so a startup with nothing to recover does not
+        open a write transaction.
+        """
+        cursor = await self.database.connection.execute(
             """UPDATE wiki_vector_manifest
             SET status = 'error',
                 error = COALESCE(error, 'vector sync was interrupted'),
@@ -67,7 +76,14 @@ class SQLiteSearchRepository:
             WHERE status = 'pending'""",
             (time_ns(),),
         )
-        await self.database.connection.commit()
+        if cursor.rowcount:
+            # Recovered work is outstanding; force the next sync past the fast path.
+            await self.database.connection.execute(
+                "DELETE FROM wiki_index_meta WHERE key = 'index_generation'"
+            )
+            await self.database.connection.commit()
+        else:
+            await self.database.connection.rollback()
 
     async def vector_stale_paths(self) -> set[str]:
         """Return documents whose current chunks lack ready vectors."""
@@ -161,6 +177,43 @@ class SQLiteSearchRepository:
                 )
             await connection.commit()
 
+    async def index_generation(self) -> str:
+        """Return the fingerprint recorded when the projection was last written."""
+        cursor = await self.database.connection.execute(
+            "SELECT value FROM wiki_index_meta WHERE key = 'index_generation'"
+        )
+        row = await cursor.fetchone()
+        return str(row[0]) if row is not None else ""
+
+    async def mark_index_complete(self, generation: str) -> None:
+        """Record the document-set fingerprint and that a full pass has completed.
+
+        Distinguishing "indexed and empty" from "never indexed" needs a persistent flag:
+        a zero row count cannot tell those apart on its own.
+        """
+        connection = self.database.connection
+        await connection.execute(
+            """INSERT INTO wiki_index_meta(key, value) VALUES ('index_generation', ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value""",
+            (generation,),
+        )
+        await connection.execute(
+            """INSERT INTO wiki_index_meta(key, value) VALUES ('index_completed', '1')
+            ON CONFLICT(key) DO UPDATE SET value = '1'"""
+        )
+        await connection.commit()
+
+    def finish_rebuild(self) -> None:
+        """Delegate to the connection layer that owns the rebuild marker."""
+        self.database.finish_rebuild()
+
+    async def indexed_once(self) -> bool:
+        """Return True when this projection has completed at least one full pass."""
+        cursor = await self.database.connection.execute(
+            "SELECT value FROM wiki_index_meta WHERE key = 'index_completed'"
+        )
+        return await cursor.fetchone() is not None
+
     async def fingerprints(self) -> dict[str, DocumentFingerprint]:
         cursor = await self.database.connection.execute(
             """SELECT path, modified_at_ns, size, content_hash, document_id
@@ -183,13 +236,14 @@ class SQLiteSearchRepository:
         edges: tuple[GraphEdgeDraft, ...] = (),
         moved_from: str | None = None,
     ) -> str | None:
-        await self._cancel_vector_tasks_for_paths(
-            tuple(path for path in (document.path.value, moved_from) if path is not None)
-        )
-        async with self._write_lock:
-            return await self._replace_document(
-                document, chunks, edges, moved_from=moved_from
+        async with self._task_lock:
+            await self._cancel_vector_tasks_for_paths(
+                tuple(path for path in (document.path.value, moved_from) if path is not None)
             )
+            async with self._write_lock:
+                return await self._replace_document(
+                    document, chunks, edges, moved_from=moved_from
+                )
 
     async def _replace_document(
         self,
@@ -219,8 +273,12 @@ class SQLiteSearchRepository:
             sort_keys=True,
         )
         try:
-            document_id = await self._prepare_document_identity(document, moved_from)
+            document_id, stale_path = await self._prepare_document_identity(document, moved_from)
+            # Release the previous projection before inserting the new one so a concurrent
+            # reader observes all-old or all-new, never a missing document row.
             await self._delete_document_projection(document_id, document.path.value)
+            if stale_path is not None and stale_path != document.path.value:
+                await self._delete_document_projection(document_id, stale_path)
             await connection.execute(
                 """
                 INSERT INTO wiki_documents(
@@ -258,13 +316,20 @@ class SQLiteSearchRepository:
                         chunk.embedding_hash or chunk.source_hash,
                     ),
                 )
+                characters, bigrams, words = analyze(
+                    f"{document.title} {tags} {chunk.section} {chunk.content}"
+                )
                 await connection.execute(
-                    """INSERT INTO wiki_chunks_fts(chunk_id, path, title, section, content)
-                    VALUES (?, ?, ?, ?, ?)""",
+                    """INSERT INTO wiki_chunks_fts(
+                        chunk_id, path, search_chars, search_bigrams, search_words,
+                        section, content
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
                     (
                         chunk.chunk_id,
                         document.path.value,
-                        f"{document.title} {tags}".strip(),
+                        characters,
+                        bigrams,
+                        words,
                         chunk.section,
                         chunk.content,
                     ),
@@ -301,6 +366,8 @@ class SQLiteSearchRepository:
                 )
             await connection.commit()
         except BaseException:
+            # BaseException (not Exception) so a CancelledError still releases the open
+            # transaction before propagating.
             await connection.rollback()
             raise
         if needs_vector_task:
@@ -309,7 +376,14 @@ class SQLiteSearchRepository:
 
     async def _prepare_document_identity(
         self, document: WikiDocument, moved_from: str | None
-    ) -> str:
+    ) -> tuple[str, str | None]:
+        """Return the document identity to use and any stale path that must be cleared.
+
+        The stale path is the previous location of a moved document, or the path of a
+        different document that used to occupy the target path. Both are cleared with
+        the *stale* path so the FTS projection is released correctly; the caller then
+        inserts the new projection in the same transaction.
+        """
         connection = self.database.connection
         cursor = await connection.execute(
             "SELECT document_id FROM wiki_documents WHERE path = ?",
@@ -317,55 +391,24 @@ class SQLiteSearchRepository:
         )
         row = await cursor.fetchone()
         if row is not None and row[0]:
-            return str(row[0])
+            # A different document already occupies this path; the incoming content wins.
+            return str(row[0]), document.path.value
+        document_id = uuid4().hex
+        stale_path: str | None = None
         if moved_from is not None:
             cursor = await connection.execute(
                 "SELECT document_id FROM wiki_documents WHERE path = ?", (moved_from,)
             )
             moved_row = await cursor.fetchone()
-        else:
-            moved_row = None
-        if moved_row is not None and moved_row[0]:
-            old_id = str(moved_row[0])
-            await self._delete_document_children(old_id, moved_from)
-            await connection.execute(
-                "UPDATE wiki_documents SET path = ? WHERE document_id = ?",
-                (document.path.value, old_id),
-            )
-            await connection.execute(
-                "UPDATE wiki_chunks SET path = ? WHERE document_id = ?",
-                (document.path.value, old_id),
-            )
-            await connection.execute(
-                "UPDATE wiki_chunks_fts SET path = ? WHERE path = ?",
-                (document.path.value, moved_from),
-            )
-            await connection.execute(
-                "UPDATE wiki_edges SET target_path = ? WHERE target_document_id = ?",
-                (document.path.value, old_id),
-            )
-            return old_id
-        return uuid4().hex
-
-    async def _delete_document_children(self, document_id: str, path: str | None) -> None:
-        connection = self.database.connection
-        if self.database.sqlite_vec_available and self.database.vector_dimensions is not None:
-            await connection.execute(
-                """DELETE FROM wiki_vector_embeddings
-                WHERE rowid IN (
-                    SELECT vector_id FROM wiki_vector_manifest WHERE document_id = ?
-                )""",
-                (document_id,),
-            )
-        await connection.execute(
-            "DELETE FROM wiki_vector_manifest WHERE document_id = ?", (document_id,)
-        )
-        if path is not None:
-            await connection.execute("DELETE FROM wiki_chunks_fts WHERE path = ?", (path,))
-        await connection.execute(
-            "DELETE FROM wiki_edges WHERE source_document_id = ?", (document_id,)
-        )
-        await connection.execute("DELETE FROM wiki_chunks WHERE document_id = ?", (document_id,))
+            if moved_row is not None and moved_row[0]:
+                document_id = str(moved_row[0])
+                stale_path = moved_from
+                # Keep incoming edges pointing at the moved document.
+                await connection.execute(
+                    "UPDATE wiki_edges SET target_path = ? WHERE target_document_id = ?",
+                    (document.path.value, document_id),
+                )
+        return document_id, stale_path
 
     async def _delete_document_projection(self, document_id: str, path: str) -> None:
         connection = self.database.connection
@@ -384,6 +427,10 @@ class SQLiteSearchRepository:
         await connection.execute(
             "DELETE FROM wiki_edges WHERE source_document_id = ?", (document_id,)
         )
+        # Delete chunks explicitly instead of relying on the FK cascade, and keep the
+        # FTS table (which has no foreign keys) in step with it.
+        await connection.execute("DELETE FROM wiki_chunks WHERE document_id = ?", (document_id,))
+        await connection.execute("DELETE FROM wiki_chunks WHERE path = ?", (path,))
         await connection.execute("DELETE FROM wiki_documents WHERE document_id = ?", (document_id,))
 
     async def _reusable_vectors(
@@ -470,6 +517,15 @@ class SQLiteSearchRepository:
         chunks: tuple[IndexedChunk, ...],
         reusable: dict[str, bytes],
     ) -> None:
+        """Register a background vector task until the repository closes.
+
+        Callers hold ``_task_lock`` (see :meth:`replace_document`), so registration
+        and the ``_vector_closed`` check are atomic with respect to ``close()`` and
+        to a concurrent cancellation for the same document. A task can therefore
+        never escape both cancellation and the ``close()`` snapshot.
+        """
+        if self._vector_closed:
+            return
         task = asyncio.create_task(
             self._synchronize_vectors(document_id, document, chunks, reusable)
         )
@@ -654,39 +710,74 @@ class SQLiteSearchRepository:
             await asyncio.gather(*tuple(self._vector_tasks), return_exceptions=True)
 
     async def close(self) -> None:
+        """Stop background vector work and leave every pending row retryable.
+
+        Background embedding runs in a thread that cannot be interrupted, so the
+        coroutine is cancelled and the connection is only closed by the caller
+        afterwards. Pending manifest rows are explicitly marked ``error`` because a
+        cancelled task never reaches its own error handler.
+        """
+        self._vector_closed = True
         tasks = tuple(self._vector_tasks)
         for task in tasks:
             task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._vector_tasks_by_document.clear()
-
-    async def delete_paths(self, paths: tuple[str, ...], *, commit: bool = True) -> None:
-        await self._cancel_vector_tasks_for_paths(paths)
-        async with self._write_lock:
+        try:
             connection = self.database.connection
-            for path in paths:
-                cursor = await connection.execute(
-                    "SELECT document_id FROM wiki_documents WHERE path = ?", (path,)
+            cursor = await connection.execute(
+                """UPDATE wiki_vector_manifest
+                SET status = 'error',
+                    error = COALESCE(error, 'vector sync cancelled at shutdown'),
+                    updated_at_ns = ?
+                WHERE status = 'pending'""",
+                (time_ns(),),
+            )
+            if cursor.rowcount:
+                # Work is outstanding, so the "documents unchanged" shortcut must not
+                # hide it: the next startup has to retry those chunks.
+                await connection.execute(
+                    "DELETE FROM wiki_index_meta WHERE key = 'index_generation'"
                 )
-                row = await cursor.fetchone()
-                if row is not None:
-                    await self._delete_document_projection(str(row[0]), path)
-            if commit:
+            await connection.commit()
+        except (OSError, sqlite3.Error):
+            # The connection may already be unusable; the next startup re-owns this state.
+            pass
+
+    async def delete_paths(self, paths: tuple[str, ...]) -> None:
+        async with self._task_lock:
+            await self._cancel_vector_tasks_for_paths(paths)
+            async with self._write_lock:
+                connection = self.database.connection
+                for path in paths:
+                    cursor = await connection.execute(
+                        "SELECT document_id FROM wiki_documents WHERE path = ?", (path,)
+                    )
+                    row = await cursor.fetchone()
+                    if row is not None:
+                        await self._delete_document_projection(str(row[0]), path)
                 await connection.commit()
 
     async def clear(self) -> None:
-        await self._cancel_vector_tasks()
-        async with self._write_lock:
-            connection = self.database.connection
-            await connection.execute("DELETE FROM wiki_chunks_fts")
-            await connection.execute("DELETE FROM wiki_vectors")
-            await connection.execute("DELETE FROM wiki_edges")
-            await connection.execute("DELETE FROM wiki_vector_manifest")
-            if self.database.sqlite_vec_available and self.database.vector_dimensions is not None:
-                await connection.execute("DELETE FROM wiki_vector_embeddings")
-            await connection.execute("DELETE FROM wiki_documents")
-            await connection.commit()
+        async with self._task_lock:
+            await self._cancel_vector_tasks()
+            async with self._write_lock:
+                connection = self.database.connection
+                await connection.execute("DELETE FROM wiki_chunks_fts")
+                await connection.execute("DELETE FROM wiki_edges")
+                await connection.execute("DELETE FROM wiki_vector_manifest")
+                if (
+                    self.database.sqlite_vec_available
+                    and self.database.vector_dimensions is not None
+                ):
+                    await connection.execute("DELETE FROM wiki_vector_embeddings")
+                await connection.execute("DELETE FROM wiki_documents")
+                await connection.execute(
+                    "DELETE FROM wiki_index_meta "
+                    "WHERE key IN ('index_generation', 'index_completed')"
+                )
+                await connection.commit()
 
     async def _cancel_vector_tasks(self) -> None:
         tasks = tuple(self._vector_tasks)
@@ -741,7 +832,7 @@ class SQLiteSearchRepository:
             SELECT source.path AS source_path, e.target_path AS target_path,
                    COALESCE(target.title, e.target_path) AS target_title,
                    e.relation_type, e.resolution_status,
-                   e.source_section, e.context,
+                   e.anchor, e.source_section, e.context,
                    'outgoing' AS direction
             FROM wiki_edges AS e
             JOIN wiki_documents AS source ON source.document_id = e.source_document_id
@@ -750,7 +841,7 @@ class SQLiteSearchRepository:
             UNION ALL
             SELECT target.path AS source_path, source.path AS target_path,
                    source.title AS target_title, e.relation_type, e.resolution_status,
-                   e.source_section, e.context,
+                   e.anchor, e.source_section, e.context,
                    'incoming' AS direction
             FROM wiki_edges AS e
             JOIN wiki_documents AS source ON source.document_id = e.source_document_id
@@ -777,6 +868,7 @@ class SQLiteSearchRepository:
                 relation_type=str(row["relation_type"]),
                 direction=direction,
                 resolution_status=resolution_status,
+                anchor=str(row["anchor"]) if row["anchor"] is not None else None,
                 source_section=(
                     str(row["source_section"]) if row["source_section"] is not None else None
                 ),
@@ -786,52 +878,230 @@ class SQLiteSearchRepository:
                 values.append(item)
         return {path: tuple(values) for path, values in related.items()}
 
+    async def _rows(self, sql: str, parameters: tuple[object, ...]) -> list[sqlite3.Row]:
+        cursor = await self.database.connection.execute(sql, parameters)
+        return list(await cursor.fetchall())
+
+    async def _candidate_rows(
+        self,
+        sql: str,
+        parameters: tuple[object, ...],
+        query: ContextQuery,
+        *,
+        similarity_key: bool = False,
+    ) -> list[SearchCandidate]:
+        """Run one candidate query and apply the checks SQL cannot express.
+
+        ``scope``/``type``/``tags`` are pushed into SQL so ``LIMIT`` applies after
+        filtering, and the keyword leg's phrase semantics are enforced by FTS5 itself,
+        so only ``metadata_filters`` operators remain to be evaluated here (they are
+        cheap on the bounded row set). ``similarity_key`` says the leg's rank key is a
+        negated cosine similarity rather than bm25 or a timestamp.
+        """
+        rows = await self._rows(sql, parameters)
+        candidates: list[SearchCandidate] = []
+        for row in rows:
+            path = str(row["path"])
+            section = str(row["section"])
+            content = str(row["content"])
+            frontmatter = json.loads(row["frontmatter_json"])
+            if not self._metadata_matches_query(frontmatter, query):
+                continue
+            candidates.append(
+                SearchCandidate(
+                    chunk_id=str(row["chunk_id"]),
+                    path={"value": path},
+                    title=str(row["title"]),
+                    section=section,
+                    content=content,
+                    frontmatter=frontmatter,
+                    modified_at_ns=int(row["modified_at_ns"]),
+                    rank_score=self._rank_score(row, similarity_key=similarity_key),
+                )
+            )
+        return candidates
+
+    @staticmethod
+    def _rank_score(row: sqlite3.Row, *, similarity_key: bool) -> float:
+        """Return the source's own comparable rank key.
+
+        Only the vector leg's key is a similarity (``-(cosine)``, negated so its
+        ascending order still means "better first"); bm25 and timestamps are not
+        comparable, so they are reported as 0.0.
+        """
+        if not similarity_key:
+            return 0.0
+        try:
+            selected = row["selected_rank"]
+        except (IndexError, KeyError):
+            return 0.0
+        return float(selected) if selected is not None else 0.0
+
+    @classmethod
+    def _filters_sql(cls, query: ContextQuery) -> tuple[list[str], list[object]]:
+        """Push scope/type/tags filters into SQL so LIMIT applies after filtering."""
+        conditions: list[str] = []
+        parameters: list[object] = []
+        scope = query.scope.strip("/")
+        if scope:
+            conditions.append("(c.path = ? OR c.path LIKE ? ESCAPE '\\')")
+            parameters.extend((scope, f"{cls._like_pattern(scope)}%"))
+        if query.note_types:
+            placeholders = ", ".join("?" for _ in query.note_types)
+            conditions.append(
+                f"lower(COALESCE(json_extract(d.frontmatter_json, '$.type'), "
+                f"json_extract(d.frontmatter_json, '$.note_type'), '')) IN ({placeholders})"
+            )
+            parameters.extend(value.casefold() for value in query.note_types)
+        for requested in query.tags:
+            spellings = (requested, *query.tag_aliases.get(requested, ()))
+            parts: list[str] = []
+            for spelling in spellings:
+                canonical = spelling.casefold()
+                parts.append("EXISTS (SELECT 1 FROM json_each(d.frontmatter_json, '$.tags') "
+                             "AS t WHERE lower(CAST(t.value AS TEXT)) = ? OR "
+                             "lower(CAST(t.value AS TEXT)) LIKE ? ESCAPE '\\')")
+                parameters.extend((canonical, f"{cls._like_pattern(canonical)}%"))
+            conditions.append(f"({' OR '.join(parts)})")
+        return conditions, parameters
+
+    @staticmethod
+    def _candidate_sql(
+        *,
+        rows_from: str,
+        select: str,
+        extra_conditions: tuple[str, ...] = (),
+        extra_parameters: tuple[object, ...] = (),
+        per_document: int,
+        limit: int,
+        order: str,
+        filters: tuple[list[str], list[object]],
+    ) -> tuple[str, tuple[object, ...]]:
+        filter_conditions, filter_parameters = filters
+        conditions = [*filter_conditions, *extra_conditions]
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        sql = f"""
+            WITH ranked AS (
+                SELECT {select}
+                FROM {rows_from}
+                {where}
+            ),
+            chosen AS (
+                SELECT *, ROW_NUMBER() OVER (
+                    PARTITION BY path ORDER BY selected_rank, ordinal
+                ) AS document_rank
+                FROM ranked
+            )
+            SELECT chunk_id, path, title, section, content, frontmatter_json,
+                   modified_at_ns, selected_rank
+            FROM chosen
+            WHERE document_rank <= ?
+            ORDER BY selected_rank {order}, ordinal
+            LIMIT ?
+        """
+        parameters = (*filter_parameters, *extra_parameters, per_document, limit)
+        return sql, parameters
+
+    def _query_candidates(
+        self,
+        query: ContextQuery,
+        *,
+        rows_from: str,
+        select: str,
+        extra_conditions: tuple[str, ...] = (),
+        extra_parameters: tuple[object, ...] = (),
+        per_document: int = 4,
+        sql_limit: int | None = None,
+        order: str = "ASC",
+        candidate_limit: int,
+    ) -> tuple[str, tuple[object, ...]]:
+        return self._candidate_sql(
+            rows_from=rows_from,
+            select=select,
+            extra_conditions=extra_conditions,
+            extra_parameters=extra_parameters,
+            per_document=per_document,
+            limit=sql_limit if sql_limit is not None else candidate_limit,
+            order=order,
+            filters=self._filters_sql(query),
+        )
+
     async def exact_candidates(
         self, query: ContextQuery, *, candidate_limit: int
     ) -> list[SearchCandidate]:
-        if not query.query.strip():
+        """Match path/title substrings per query token, not the whole query string."""
+        terms = query_terms(query.query)
+        if not terms:
             return []
-        pattern = self._like_pattern(query.query.strip())
-        rows = await self._rows(
-            """
-            SELECT c.chunk_id, c.path, d.title, c.section, c.content,
-                   d.frontmatter_json, d.modified_at_ns
-            FROM wiki_chunks AS c JOIN wiki_documents AS d ON d.path = c.path
-            WHERE (d.path LIKE ? ESCAPE '\\' COLLATE NOCASE
-                   OR d.title LIKE ? ESCAPE '\\' COLLATE NOCASE)
-            ORDER BY d.modified_at_ns DESC, c.ordinal
-            """,
-            (pattern, pattern),
+        conditions: list[str] = []
+        parameters: list[object] = []
+        for term in terms:
+            pattern = self._like_pattern(term)
+            conditions.append(
+                "(d.path LIKE ? ESCAPE '\\' COLLATE NOCASE "
+                "OR d.title LIKE ? ESCAPE '\\' COLLATE NOCASE)"
+            )
+            parameters.extend((pattern, pattern))
+        sql, params = self._query_candidates(
+            query,
+            rows_from="wiki_chunks AS c JOIN wiki_documents AS d ON d.path = c.path",
+            select=(
+                "c.chunk_id AS chunk_id, c.path AS path, d.title AS title, c.section AS section, "
+                "c.content AS content, d.frontmatter_json AS frontmatter_json, "
+                "d.modified_at_ns AS modified_at_ns, d.modified_at_ns AS selected_rank, "
+                "c.ordinal AS ordinal"
+            ),
+            extra_conditions=tuple(conditions),
+            extra_parameters=tuple(parameters),
+            order="DESC",
+            candidate_limit=candidate_limit,
         )
-        return self._filtered(rows, query, score=1.0)[:candidate_limit]
+        return await self._candidate_rows(sql, params, query)
 
     async def keyword_candidates(
         self, query: ContextQuery, *, candidate_limit: int
     ) -> list[SearchCandidate]:
-        tokens = _TOKEN_RE.findall(query.query)
-        if not tokens:
+        if not query.query.strip():
             return []
-        match = " OR ".join(f'"{token.replace(chr(34), chr(34) * 2)}"' for token in tokens)
-        rows = await self._rows(
-            """
-            SELECT c.chunk_id, c.path, d.title, c.section, c.content,
-                   d.frontmatter_json, d.modified_at_ns,
-                   bm25(wiki_chunks_fts) AS source_score
-            FROM wiki_chunks_fts
-            JOIN wiki_chunks AS c ON c.chunk_id = wiki_chunks_fts.chunk_id
-            JOIN wiki_documents AS d ON d.path = c.path
-            WHERE wiki_chunks_fts MATCH ?
-            ORDER BY source_score
-            """,
-            (match,),
+        match = query_expression(query.query)
+        if not match:
+            return []
+        candidates = await self._keyword_rows(query, match, candidate_limit)
+        if candidates:
+            return candidates
+        # Strict phrases found nothing; retry once with OR-joined terms so a question-shaped
+        # query still contributes lexical candidates. bm25 keeps the ranking sane.
+        relaxed = relaxed_query_expression(query.query)
+        if not relaxed or relaxed == match:
+            return []
+        return await self._keyword_rows(query, relaxed, candidate_limit)
+
+    async def _keyword_rows(
+        self, query: ContextQuery, match: str, candidate_limit: int
+    ) -> list[SearchCandidate]:
+        sql, params = self._query_candidates(
+            query,
+            rows_from=(
+                "wiki_chunks_fts JOIN wiki_chunks AS c ON c.chunk_id = wiki_chunks_fts.chunk_id "
+                "JOIN wiki_documents AS d ON d.path = c.path"
+            ),
+            select=(
+                "c.chunk_id AS chunk_id, c.path AS path, d.title AS title, c.section AS section, "
+                "c.content AS content, d.frontmatter_json AS frontmatter_json, "
+                "d.modified_at_ns AS modified_at_ns, bm25(wiki_chunks_fts) AS selected_rank, "
+                "c.ordinal AS ordinal"
+            ),
+            extra_conditions=("wiki_chunks_fts MATCH ?",),
+            extra_parameters=(match,),
+            candidate_limit=candidate_limit,
         )
-        return self._filtered(rows, query, score_from_row=True)[:candidate_limit]
+        return await self._candidate_rows(sql, params, query)
 
     async def graph_candidates(
         self, query: ContextQuery, *, candidate_limit: int
     ) -> list[SearchCandidate]:
         """Find source documents through explicit relation type or target metadata."""
-        tokens = _TOKEN_RE.findall(query.query)
+        tokens = simple_tokens(query.query)
         if not tokens:
             return []
         conditions: list[str] = []
@@ -844,20 +1114,26 @@ class SQLiteSearchRepository:
                 "OR lower(coalesce(target.title, '')) LIKE ? ESCAPE '\\')"
             )
             parameters.extend((pattern, pattern, pattern))
-        rows = await self._rows(
-            f"""
-            SELECT DISTINCT c.chunk_id, c.path, source.title, c.section, c.content,
-                   source.frontmatter_json, source.modified_at_ns, 1.0 AS source_score
-            FROM wiki_edges AS e
-            JOIN wiki_documents AS source ON source.document_id = e.source_document_id
-            JOIN wiki_chunks AS c ON c.document_id = source.document_id AND c.ordinal = 0
-            LEFT JOIN wiki_documents AS target ON target.document_id = e.target_document_id
-            WHERE {' OR '.join(conditions)}
-            ORDER BY source.modified_at_ns DESC
-            """,
-            tuple(parameters),
+        sql, params = self._query_candidates(
+            query,
+            rows_from=(
+                "wiki_edges AS e "
+                "JOIN wiki_documents AS d ON d.document_id = e.source_document_id "
+                "JOIN wiki_chunks AS c ON c.document_id = d.document_id AND c.ordinal = 0 "
+                "LEFT JOIN wiki_documents AS target ON target.document_id = e.target_document_id"
+            ),
+            select=(
+                "c.chunk_id AS chunk_id, c.path AS path, d.title AS title, c.section AS section, "
+                "c.content AS content, d.frontmatter_json AS frontmatter_json, "
+                "d.modified_at_ns AS modified_at_ns, d.modified_at_ns AS selected_rank, "
+                "c.ordinal AS ordinal"
+            ),
+            extra_conditions=(f"({' OR '.join(conditions)})",),
+            extra_parameters=tuple(parameters),
+            order="DESC",
+            candidate_limit=candidate_limit,
         )
-        return self._filtered(rows, query, score_from_row=True)[:candidate_limit]
+        return await self._candidate_rows(sql, params, query)
 
     async def semantic_candidates(
         self, query: ContextQuery, *, candidate_limit: int
@@ -876,101 +1152,71 @@ class SQLiteSearchRepository:
             or not all(math.isfinite(value) for value in query_vector)
         ):
             raise ValueError("embedding provider returned an invalid query vector")
-        rows = await self._rows(
-            """
-            SELECT c.chunk_id, c.path, d.title, c.section, c.content,
-                   d.frontmatter_json, d.modified_at_ns,
-                   1.0 / (1.0 + knn.distance) AS source_score
-            FROM wiki_vector_embeddings AS knn
-            JOIN wiki_vector_manifest AS v ON v.vector_id = knn.rowid
-            JOIN wiki_chunks AS c ON c.chunk_id = v.chunk_id
-            JOIN wiki_documents AS d ON d.path = c.path
-            WHERE knn.embedding MATCH ?
-              AND knn.k = ?
-              AND v.model = ?
-              AND v.status = 'ready'
-            AND v.source_hash = c.embedding_hash
-            ORDER BY knn.distance
-            """,
-            (json.dumps(query_vector), candidate_limit * 4, self.embedding_provider.model_name),
+        sql, params = self._query_candidates(
+            query,
+            rows_from=(
+                "wiki_vector_embeddings AS knn "
+                "JOIN wiki_vector_manifest AS v ON v.vector_id = knn.rowid "
+                "JOIN wiki_chunks AS c ON c.chunk_id = v.chunk_id "
+                "JOIN wiki_documents AS d ON d.path = c.path"
+            ),
+            select=(
+                "c.chunk_id AS chunk_id, c.path AS path, d.title AS title, c.section AS section, "
+                "c.content AS content, d.frontmatter_json AS frontmatter_json, "
+                "d.modified_at_ns AS modified_at_ns, "
+                # sqlite-vec reports L2 distance; vectors are unit-normalized, so this
+                # is the cosine similarity negated to keep "lower rank is better".
+                "-(1.0 - (knn.distance * knn.distance) / 2.0) AS selected_rank, "
+                "c.ordinal AS ordinal"
+            ),
+            extra_conditions=(
+                "knn.embedding MATCH ?",
+                "knn.k = ?",
+                "v.model = ?",
+                "v.status = 'ready'",
+                "v.source_hash = c.embedding_hash",
+            ),
+            extra_parameters=(
+                json.dumps(query_vector),
+                candidate_limit * 4,
+                self.embedding_provider.model_name,
+            ),
+            candidate_limit=candidate_limit,
         )
-        candidates = self._filtered(rows, query, score_from_row=True)
-        return candidates[:candidate_limit]
+        candidates = await self._candidate_rows(sql, params, query, similarity_key=True)
+        threshold = query.min_similarity
+        if threshold > 0:
+            # Drop hits that are not close enough; an empty vector leg is a real answer
+            # ("not found"), not a reason to fall back to weak matches.
+            return [item for item in candidates if -item.rank_score >= threshold]
+        return candidates
 
     async def recent_candidates(
         self, query: ContextQuery, *, candidate_limit: int
     ) -> list[SearchCandidate]:
-        rows = await self._rows(
-            """
-            SELECT c.chunk_id, c.path, d.title, c.section, c.content,
-                   d.frontmatter_json, d.modified_at_ns
-            FROM wiki_documents AS d
-            JOIN wiki_chunks AS c ON c.path = d.path
-            WHERE c.ordinal = 0
-            ORDER BY d.modified_at_ns DESC
-            """,
-            (),
+        """Return the most recently modified chunks, newest first.
+
+        Every chunk of a document shares ``modified_at_ns``, and the section a user
+        just changed is not necessarily the document's first chunk, so this ranks all
+        chunks instead of only ``ordinal = 0``.
+        """
+        sql, params = self._query_candidates(
+            query,
+            rows_from="wiki_documents AS d JOIN wiki_chunks AS c ON c.path = d.path",
+            select=(
+                "c.chunk_id AS chunk_id, c.path AS path, d.title AS title, c.section AS section, "
+                "c.content AS content, d.frontmatter_json AS frontmatter_json, "
+                "d.modified_at_ns AS modified_at_ns, d.modified_at_ns AS selected_rank, "
+                "c.ordinal AS ordinal"
+            ),
+            per_document=1,
+            order="DESC",
+            candidate_limit=candidate_limit,
         )
-        return self._filtered(rows, query, score=0.0)[:candidate_limit]
-
-    async def _rows(self, sql: str, parameters: tuple[object, ...]) -> list[sqlite3.Row]:
-        cursor = await self.database.connection.execute(sql, parameters)
-        return list(await cursor.fetchall())
-
-    @classmethod
-    def _filtered(
-        cls,
-        rows: list[sqlite3.Row],
-        query: ContextQuery,
-        *,
-        score: float | None = None,
-        score_from_row: bool = False,
-    ) -> list[SearchCandidate]:
-        candidates: list[SearchCandidate] = []
-        scope = query.scope.strip("/")
-        for row in rows:
-            path = str(row["path"])
-            if scope and path != scope and not path.startswith(f"{scope}/"):
-                continue
-            metadata = json.loads(row["frontmatter_json"])
-            if not cls._metadata_matches_query(metadata, query):
-                continue
-            source_score = (
-                -float(row["source_score"])
-                if score_from_row
-                else float(score or 0.0)
-            )
-            candidates.append(
-                SearchCandidate(
-                    chunk_id=str(row["chunk_id"]),
-                    path={"value": path},
-                    title=str(row["title"]),
-                    section=str(row["section"]),
-                    content=str(row["content"]),
-                    frontmatter=metadata,
-                    modified_at_ns=int(row["modified_at_ns"]),
-                    score=source_score,
-                )
-            )
-        return candidates
+        return await self._candidate_rows(sql, params, query)
 
     @classmethod
     def _metadata_matches_query(cls, metadata: dict[str, object], query: ContextQuery) -> bool:
-        note_type = str(metadata.get("type", metadata.get("note_type", ""))).casefold()
-        if query.note_types and note_type not in {value.casefold() for value in query.note_types}:
-            return False
-        raw_tags = metadata.get("tags", [])
-        note_tags = [raw_tags] if isinstance(raw_tags, str) else raw_tags
-        if not isinstance(note_tags, list):
-            note_tags = []
-        if not all(
-            any(
-                tag_matches_filter(str(item), requested, query.tag_aliases)
-                for item in note_tags
-            )
-            for requested in query.tags
-        ):
-            return False
         return all(
             cls._metadata_matches(metadata, key, expected)
             for key, expected in query.metadata_filters.items()
@@ -996,6 +1242,20 @@ class SQLiteSearchRepository:
     def _metadata_matches(
         cls, metadata: dict[str, object], key: str, expected: object
     ) -> bool:
+        """Compare one Frontmatter value against a filter.
+
+        ``key`` is a dotted path (``owner.name``) resolved against the whole frontmatter
+        mapping. An expected mapping with a single key is an operator:
+
+        - ``$gt`` / ``$gte`` / ``$lt`` / ``$lte``: numeric when both sides are numbers,
+          otherwise lexicographic; if the two sides are of different kinds (number vs
+          text/bool) the filter does not match at all.
+        - ``$between``: inclusive range over ``[low, high]``, same kind rule as above.
+        - ``$ne``: not equal.
+        - ``$in``: the actual value equals one of the listed values.
+
+        Any other operator shape does not match. Booleans are deliberately not numbers.
+        """
         actual: object = metadata
         for part in key.split("."):
             if not isinstance(actual, dict) or part not in actual:
@@ -1006,15 +1266,20 @@ class SQLiteSearchRepository:
             if operator_name in {"$gt", "$gte", "$lt", "$lte"}:
                 if cls._is_number(actual) and cls._is_number(bound):
                     return cls._compare_numbers(operator_name, float(actual), float(bound))
-                return cls._compare_text(operator_name, str(actual), str(bound))
+                if cls._is_text(actual) and cls._is_text(bound):
+                    return cls._compare_text(operator_name, str(actual), str(bound))
+                return False
             if operator_name == "$between" and isinstance(bound, list) and len(bound) == 2:
-                if (
-                    cls._is_number(actual)
-                    and cls._is_number(bound[0])
-                    and cls._is_number(bound[1])
-                ):
-                    return float(bound[0]) <= float(actual) <= float(bound[1])
-                return str(bound[0]) <= str(actual) <= str(bound[1])
+                low, high = bound
+                if cls._is_number(actual) and cls._is_number(low) and cls._is_number(high):
+                    return float(low) <= float(actual) <= float(high)
+                if cls._is_text(actual) and cls._is_text(low) and cls._is_text(high):
+                    return str(low) <= str(actual) <= str(high)
+                return False
+            if operator_name == "$ne":
+                return actual != bound
+            if operator_name == "$in" and isinstance(bound, list):
+                return any(actual == item for item in bound)
             return False
         if isinstance(actual, list) and isinstance(expected, list):
             return all(item in actual for item in expected)
@@ -1023,6 +1288,10 @@ class SQLiteSearchRepository:
     @staticmethod
     def _is_number(value: object) -> TypeGuard[int | float]:
         return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+    @staticmethod
+    def _is_text(value: object) -> TypeGuard[str]:
+        return isinstance(value, str)
 
     @staticmethod
     def _compare_numbers(operator_name: str, left: float, right: float) -> bool:
@@ -1045,6 +1314,11 @@ class SQLiteSearchRepository:
         return left <= right
 
     async def _invalidate_changed_model(self) -> None:
+        """Drop stored vectors when the configured embedding model changed.
+
+        Only writes when the model is new or different, so a startup that changes nothing
+        does not open a write transaction.
+        """
         connection = self.database.connection
         cursor = await connection.execute(
             "SELECT value FROM wiki_index_meta WHERE key = 'vector_model'"
@@ -1052,7 +1326,11 @@ class SQLiteSearchRepository:
         row = await cursor.fetchone()
         configured = None if self.embedding_provider is None else self.embedding_provider.model_name
         stored = None if row is None else str(row["value"])
-        if stored is not None and stored != configured:
+        if stored == configured:
+            return
+        if stored is not None:
+            # drop_vector_table also clears 'index_generation', which is what forces the
+            # next sync to re-embed instead of taking the unchanged-documents fast path.
             await self.database.drop_vector_table()
         if configured is not None:
             await connection.execute(

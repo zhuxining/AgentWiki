@@ -6,19 +6,10 @@ import posixpath
 import re
 
 from agentwiki.domain.documents import DocumentPath, WikiDocument
+from agentwiki.domain.graph import GraphEdgeDraft
 
-_WIKILINK = re.compile(r"\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|[^\]]+)?\]\]")
+_WIKILINK = re.compile(r"\[\[([^\]|#]+)(?:#([^\]|]+))?(?:\|[^\]]+)?\]\]")
 _MARKDOWN_LINK = re.compile(r"(?<!!)\[[^\]]*\]\(([^)\s]+)(?:\s+[^)]*)?\)")
-
-
-@dataclass(frozen=True, slots=True)
-class GraphEdgeDraft:
-    target_path: str
-    relation_type: str
-    source_kind: str
-    anchor: str | None = None
-    source_section: str | None = None
-    context: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +35,7 @@ def extract_graph(document: WikiDocument) -> GraphExtraction:
                     target,
                     "links_to",
                     "wikilink",
+                    anchor=_normalize_anchor(match.group(2)),
                     source_section=_section_at(document.content, match.start()),
                     context=_context_at(document.content, match.start()),
                 )
@@ -93,6 +85,14 @@ def extract_graph(document: WikiDocument) -> GraphExtraction:
 
     unique = {(edge.target_path, edge.relation_type, edge.source_kind): edge for edge in edges}
     return GraphExtraction(tuple(unique.values()), tuple(warnings))
+
+
+def _normalize_anchor(raw: str | None) -> str | None:
+    """Normalize the ``#fragment`` of a wikilink, or None when it has none."""
+    if raw is None:
+        return None
+    anchor = " ".join(raw.split())
+    return anchor or None
 
 
 def _section_at(content: str, offset: int) -> str | None:

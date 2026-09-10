@@ -1,17 +1,25 @@
 """SQLite connection and schema lifecycle for the rebuildable search index."""
 
 import contextlib
+import json
 from pathlib import Path
 import sqlite3
 
 import aiosqlite
+from loguru import logger
 
 try:
     import sqlite_vec
 except ImportError:  # pragma: no cover - dependency is optional at runtime
     sqlite_vec = None
 
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 4
+
+
+def _now_iso() -> str:
+    from datetime import UTC, datetime
+
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 class SQLiteDatabase:
@@ -20,6 +28,8 @@ class SQLiteDatabase:
         self._connection: aiosqlite.Connection | None = None
         self.sqlite_vec_available = False
         self.vector_dimensions: int | None = None
+        # Set when a previous rebuild marker was found at startup.
+        self.incomplete_rebuild: str = ""
 
     @property
     def connection(self) -> aiosqlite.Connection:
@@ -32,6 +42,21 @@ class SQLiteDatabase:
             return
         await self._open_connection()
         if await self._needs_rebuild():
+            self.incomplete_rebuild = self._read_rebuild_marker()
+            if self.incomplete_rebuild:
+                logger.warning(
+                    "previous index rebuild did not finish ({}) - rebuilding {}",
+                    self.incomplete_rebuild,
+                    self.path,
+                )
+            else:
+                logger.info(
+                    "index schema changed (found {}, current {}); rebuilding - "
+                    "original Markdown is untouched, but a large library takes a while",
+                    await self._stored_version(),
+                    _SCHEMA_VERSION,
+                )
+            self._write_rebuild_marker()
             await self._close_connection()
             self._remove_index_files()
             await self._open_connection()
@@ -67,16 +92,13 @@ class SQLiteDatabase:
             CREATE VIRTUAL TABLE IF NOT EXISTS wiki_chunks_fts USING fts5(
                 chunk_id UNINDEXED,
                 path UNINDEXED,
-                title,
-                section,
-                content
-            );
-            CREATE TABLE IF NOT EXISTS wiki_vectors (
-                chunk_id TEXT PRIMARY KEY,
-                path TEXT NOT NULL,
-                model TEXT NOT NULL,
-                vector_json TEXT NOT NULL,
-                source_hash TEXT NOT NULL
+                search_chars,
+                search_bigrams,
+                search_words,
+                section UNINDEXED,
+                content UNINDEXED,
+                tokenize='unicode61 tokenchars 0x2F',
+                prefix='1,2,3'
             );
             CREATE TABLE IF NOT EXISTS wiki_edges (
                 edge_id TEXT PRIMARY KEY,
@@ -159,6 +181,41 @@ class SQLiteDatabase:
             await self._connection.close()
             self._connection = None
 
+    def finish_rebuild(self) -> None:
+        """Clear the rebuild marker once the projection has been repopulated."""
+        if self._marker_path().is_file():
+            self._marker_path().unlink(missing_ok=True)
+
+    def _marker_path(self) -> Path:
+        return self.path.with_name(f"{self.path.name}.rebuild.json")
+
+    async def _stored_version(self) -> int:
+        cursor = await self.connection.execute("PRAGMA user_version")
+        row = await cursor.fetchone()
+        return 0 if row is None else int(row[0])
+
+    def _read_rebuild_marker(self) -> str:
+        marker = self._marker_path()
+        if not marker.is_file():
+            return ""
+        try:
+            payload = json.loads(marker.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return "marker unreadable"
+        started = payload.get("started_at") if isinstance(payload, dict) else None
+        return str(started) if started else "started at an unknown time"
+
+    def _write_rebuild_marker(self) -> None:
+        marker = self._marker_path()
+        try:
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text(
+                json.dumps({"schema_version": _SCHEMA_VERSION, "started_at": _now_iso()}),
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            logger.warning("could not record the rebuild marker {}: {}", marker, exc)
+
     def _remove_index_files(self) -> None:
         for suffix in ("", "-wal", "-shm"):
             try:
@@ -209,8 +266,11 @@ class SQLiteDatabase:
         if self.sqlite_vec_available:
             await self.connection.execute("DROP TABLE IF EXISTS wiki_vector_embeddings")
         await self.connection.execute("DELETE FROM wiki_vector_manifest")
+        # Dropping vectors invalidates the "documents unchanged" shortcut: every chunk
+        # needs re-embedding even though the Markdown did not change.
         await self.connection.execute(
-            "DELETE FROM wiki_index_meta WHERE key IN ('vector_model', 'vector_dimensions')"
+            "DELETE FROM wiki_index_meta "
+            "WHERE key IN ('vector_model', 'vector_dimensions', 'index_generation')"
         )
         self.vector_dimensions = None
 

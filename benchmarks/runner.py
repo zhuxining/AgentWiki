@@ -125,7 +125,7 @@ async def run_benchmark(
                 latencies.append(latency_ms)
                 raw_cases.append(_raw_result(query, result, latency_ms))
             chunk_count = await _count_index_rows(runtime, "wiki_chunks")
-            vector_count = await _count_index_rows(runtime, "wiki_vectors")
+            vector_count = await _count_ready_vectors(runtime)
 
         degraded_count = sum(bool(case.degraded) for case in raw_cases)
         semantic_unavailable = sum(
@@ -239,9 +239,23 @@ def _failed_result(query: BenchmarkQuery, error: str) -> QueryBenchmarkResult:
 
 async def _count_index_rows(runtime: AgentWikiRuntime, table: str) -> int:
     """Read a count through the runtime's asynchronous SQLite connection."""
-    if table not in {"wiki_chunks", "wiki_vectors"}:
+    if table != "wiki_chunks":
         raise ValueError(f"unsupported benchmark table: {table}")
     cursor = await runtime.database.connection.execute(f"SELECT COUNT(*) FROM {table}")
+    row = await cursor.fetchone()
+    return int(row[0]) if row is not None else 0
+
+
+async def _count_ready_vectors(runtime: AgentWikiRuntime) -> int:
+    """Count usable vectors.
+
+    The vector projection lives in ``wiki_vector_manifest`` plus the sqlite-vec
+    table; only ``ready`` rows are actually searchable, so that is what a report
+    should describe.
+    """
+    cursor = await runtime.database.connection.execute(
+        "SELECT COUNT(*) FROM wiki_vector_manifest WHERE status = 'ready'"
+    )
     row = await cursor.fetchone()
     return int(row[0]) if row is not None else 0
 

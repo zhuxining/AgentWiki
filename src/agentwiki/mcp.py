@@ -16,11 +16,16 @@ from agentwiki.runtime.context import AgentWikiRuntime, create_runtime
 _RUNTIME_CONTEXT_KEY = "agentwiki.runtime"
 
 
-@lifespan
-async def _lifespan(_server: FastMCP) -> AsyncIterator[dict[str, AgentWikiRuntime]]:
+async def _configured_runtime() -> AgentWikiRuntime:
+    """Assemble a runtime from the user configuration."""
     settings = Settings.load()
     provider = FastEmbedProvider(settings.embedding_model) if settings.embedding_model else None
-    runtime = await create_runtime(settings.document_root, settings.index_path, provider)
+    return await create_runtime(settings.document_root, settings.index_path, provider)
+
+
+@lifespan
+async def _lifespan(_server: FastMCP) -> AsyncIterator[dict[str, AgentWikiRuntime]]:
+    runtime = await _configured_runtime()
     try:
         yield {_RUNTIME_CONTEXT_KEY: runtime}
     finally:
@@ -33,8 +38,8 @@ mcp = FastMCP(
         "AgentWiki retrieves evidence from a local Markdown Wiki. You MUST call "
         "get_wiki_context when a task depends on Wiki history, conventions, prior decisions, "
         "cross-document relationships, recent changes, or content whose path is unknown. "
-        "The configured Wiki root is returned as `wiki_root` by retrieval and rules tools "
-        "(normally `~/AgentWiki`); result paths are relative to that root. "
+        "The configured Wiki root is returned as `wiki_root` by retrieval and rules tools; "
+        "result paths are relative to that root. "
         "If an exact path is already known and no other Wiki knowledge is needed, use native "
         "file tools directly. Search snippets are candidate evidence: read important source "
         "files with native tools before quoting them, deciding, or editing. Call "
@@ -48,17 +53,16 @@ mcp = FastMCP(
 
 @asynccontextmanager
 async def _runtime(ctx: Context) -> AsyncIterator[AgentWikiRuntime]:
+    """Reuse the lifespan runtime, falling back to a per-call one when it is missing."""
     runtime = ctx.lifespan_context.get(_RUNTIME_CONTEXT_KEY)
     if isinstance(runtime, AgentWikiRuntime):
         yield runtime
         return
-    settings = Settings.load()
-    provider = FastEmbedProvider(settings.embedding_model) if settings.embedding_model else None
-    runtime = await create_runtime(settings.document_root, settings.index_path, provider)
+    fallback = await _configured_runtime()
     try:
-        yield runtime
+        yield fallback
     finally:
-        await runtime.close()
+        await fallback.close()
 
 
 @mcp.tool(
@@ -95,6 +99,7 @@ async def get_wiki_context(
         tags=tuple(tags or ()),
         note_types=tuple(note_types or ()),
         metadata_filters=metadata_filters or {},
+        min_similarity=Settings.load().min_similarity,
     )
     async with _runtime(ctx) as runtime:
         result = await runtime.retrieval.get_wiki_context(request)

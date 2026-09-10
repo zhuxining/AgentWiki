@@ -22,7 +22,7 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["ty>=0.0.79", "ruff>=0.16.6", "pytest-asyncio>=1.4.0", "pytest>=9.1.1"]
+dev = ["ty>=0.0.79", "ruff>=0.16.6", "pytest-asyncio>=1.4.0", "pytest>=9.1.1", "pytest-cov>=7.0.0"]
 
 [project.scripts]
 agentwiki = "agentwiki:main"
@@ -34,11 +34,12 @@ build-backend = "uv_build"
 
 [tool.uv.build-backend]
 module-name = "agentwiki"
+# Ships the default AGENTWIKI.md template used to bootstrap a new Wiki into the wheel.
+source-include = ["src/agentwiki/data/**"]
 
 # Ruff
 [tool.ruff]
 line-length = 100
-fix = true
 preview = true
 unsafe-fixes = true
 
@@ -63,10 +64,10 @@ select = [
     "PD",   # pandas-specific
 ]
 ignore = [
-    "unused-import",                     # module imported but unused (handled by pyflakes)
-    "function-call-in-default-argument", # Typer calls in defaults (standard practice for Typer)
+    # Typer declares CLI parameters via function defaults, which B008 flags by design.
+    "function-call-in-default-argument",
 ]
-allowed-confusables = []
+allowed-confusables = ["，", "。", "、", "；", "：", "（", "）", "！", "？"]
 unfixable = []
 
 [tool.ruff.lint.isort]
@@ -81,7 +82,21 @@ pythonpath = ["src", "."]
 testpaths = ["tests"]
 log_cli = true
 log_cli_level = "INFO"
-addopts = ["--import-mode=importlib", "--strict-markers"]
+addopts = [
+    "--import-mode=importlib",
+    "--strict-markers",
+    # Coverage gate: a regression floor set a little below the current 90.7% so noisy
+    # platform differences do not fail CI, but a real drop does.
+    "--cov=agentwiki",
+    "--cov-report=term-missing:skip-covered",
+    "--cov-fail-under=88",
+]
+filterwarnings = [
+    # fastembed changed this model's pooling from CLS to mean; we have no prior
+    # embeddings to stay compatible with, so the new (documented) behaviour is what we
+    # want. Pinning fastembed to 0.5.1 would only freeze an older, worse default.
+    "ignore:The model .* now uses mean pooling:UserWarning",
+]
 markers = [
     "integration: marks tests that hit external services (deselect with '-m \"not integration\"')",
 ]

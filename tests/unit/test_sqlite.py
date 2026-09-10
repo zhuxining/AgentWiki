@@ -26,13 +26,6 @@ async def test_existing_index_schema_is_discarded_and_recreated(tmp_path) -> Non
             CREATE VIRTUAL TABLE wiki_chunks_fts USING fts5(
                 chunk_id UNINDEXED, path UNINDEXED, title, section, content
             );
-            CREATE TABLE wiki_vectors (
-                chunk_id TEXT PRIMARY KEY,
-                path TEXT NOT NULL,
-                model TEXT NOT NULL,
-                vector_json TEXT NOT NULL,
-                source_hash TEXT NOT NULL
-            );
             CREATE TABLE wiki_index_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
             INSERT INTO wiki_documents(path, title, frontmatter_json, modified_at_ns, size)
             VALUES ('stale.md', 'Stale', '{}', 1, 1);

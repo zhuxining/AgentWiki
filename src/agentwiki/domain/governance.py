@@ -39,6 +39,11 @@ class WikiRules(BaseModel):
     sections: tuple[WikiSectionRule, ...] = ()
     guide_content: str = ""
     known_tags: tuple[KnownTag, ...] = ()
+    # Identity of the control file that produced these rules. Callers that cache the
+    # result (an agent reusing a previous call) can compare these to detect that the
+    # rules went stale; both are 0 when the Wiki has no control file.
+    source_modified_at_ns: int = 0
+    source_size: int = 0
 
     @field_validator("tag_aliases")
     @classmethod

@@ -9,31 +9,42 @@ from agentwiki.domain.retrieval import IndexedChunk
 _HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 _MAX_CHARS = 1_200
 _OVERLAP_CHARS = 150
+_MIN_CHUNK_CHARS = 1
 
 
 def chunk_document(document: WikiDocument) -> tuple[IndexedChunk, ...]:
-    """Split a document by heading, then bound oversized sections by paragraphs."""
+    """Split a document by heading, then bound oversized sections by paragraphs.
+
+    Blank sections (a heading immediately followed by a subheading) are not emitted:
+    an empty chunk would otherwise be indexed, embedded, and returned as empty
+    evidence. A document that contains no content at all still produces one chunk so
+    that it remains addressable in the projection.
+    """
     sections: list[tuple[str, str]] = []
     headings: list[str] = []
     body: list[str] = []
+    emitted = False
 
     def flush() -> None:
+        nonlocal emitted
         content = "\n".join(body).strip()
-        if content or not sections:
-            sections.append((" / ".join(headings), content))
         body.clear()
+        if not content:
+            return
+        sections.append((" / ".join(headings), content))
+        emitted = True
 
     for line in document.content.splitlines():
         match = _HEADING.match(line)
         if match:
-            if body:
-                flush()
+            flush()
             level = len(match.group(1))
             headings[level - 1 :] = [match.group(2).strip()]
             continue
         body.append(line)
-    if body or not sections:
-        flush()
+    flush()
+    if not emitted:
+        sections.append((" / ".join(headings), ""))
 
     chunks: list[IndexedChunk] = []
     tags = document.frontmatter.get("tags", [])
@@ -62,6 +73,11 @@ def chunk_document(document: WikiDocument) -> tuple[IndexedChunk, ...]:
 
 
 def _split_oversized(content: str) -> tuple[str, ...]:
+    """Split content into fragments that never exceed ``_MAX_CHARS``.
+
+    The overlap carried into the next fragment is budgeted against the limit, so a
+    paragraph plus its overlap can no longer overshoot the bound.
+    """
     if len(content) <= _MAX_CHARS:
         return (content,)
     paragraphs = [part.strip() for part in re.split(r"\n\s*\n", content) if part.strip()]
@@ -78,14 +94,35 @@ def _split_oversized(content: str) -> tuple[str, ...]:
         if len(candidate) <= _MAX_CHARS:
             current = candidate
             continue
-        chunks.append(current)
-        overlap = current[-_OVERLAP_CHARS:].lstrip()
+        if current:
+            chunks.append(current)
+        overlap = _overlap_for(current, paragraph)
         current = f"{overlap}\n\n{paragraph}" if overlap else paragraph
     if current:
         chunks.append(current)
     return tuple(chunks)
 
 
+def _overlap_for(previous: str, upcoming: str) -> str:
+    """Return the overlap prefix that keeps the next fragment inside the bound."""
+    budget = _MAX_CHARS - len(upcoming) - 2
+    if budget <= 0:
+        return ""
+    return previous[-min(_OVERLAP_CHARS, budget) :].lstrip()
+
+
 def _window(text: str) -> list[str]:
+    """Hard-wrap one oversized paragraph, carrying overlap between windows."""
     step = _MAX_CHARS - _OVERLAP_CHARS
-    return [text[start : start + _MAX_CHARS] for start in range(0, len(text), step)]
+    windows: list[str] = []
+    start = 0
+    while start < len(text):
+        window = text[start : start + _MAX_CHARS]
+        if windows and len(window) <= _OVERLAP_CHARS:
+            # A tail that is nothing but repeated overlap adds no information.
+            break
+        windows.append(window)
+        if start + _MAX_CHARS >= len(text):
+            break
+        start += step
+    return windows

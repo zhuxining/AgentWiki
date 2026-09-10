@@ -31,12 +31,18 @@ async def create_runtime(
     index_path: Path,
     embedding_provider: EmbeddingProvider | None = None,
 ) -> AgentWikiRuntime:
+    """Assemble the runtime and make sure the Wiki has a control file.
+
+    A Wiki without ``AGENTWIKI.md`` is unusable for agents (no rules, no guidance), so
+    startup seeds the packaged default. An existing file is never overwritten.
+    """
     library = MarkdownLibrary(document_root)
+    library.ensure_control_file()
     database = SQLiteDatabase(index_path)
     await database.initialize()
     repository = SQLiteSearchRepository(database, embedding_provider)
     await repository.initialize()
-    synchronizer = IndexSynchronizer(library, repository)
+    synchronizer = IndexSynchronizer(library, repository, database.path)
     governance = GovernanceService(library)
     return AgentWikiRuntime(
         library=library,

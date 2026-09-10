@@ -22,6 +22,7 @@ class ContextQuery(BaseModel):
     note_types: tuple[str, ...] = ()
     metadata_filters: Frontmatter = Field(default_factory=dict)
     tag_aliases: TagAliases = Field(default_factory=dict)
+    min_similarity: float = Field(default=0.30, ge=0.0, le=1.0)
 
 
 class SearchCandidate(BaseModel):
@@ -36,7 +37,9 @@ class SearchCandidate(BaseModel):
     content: str
     frontmatter: Frontmatter
     modified_at_ns: int
-    score: float
+    # The source's own rank key. For the vector leg this is the negated cosine
+    # similarity (ascending order); other legs key on bm25 or a timestamp.
+    rank_score: float = 0.0
 
 
 class RelatedDocument(BaseModel):
@@ -49,6 +52,7 @@ class RelatedDocument(BaseModel):
     relation_type: str
     direction: Literal["outgoing", "incoming"]
     resolution_status: Literal["resolved", "unresolved"]
+    anchor: str | None = None
     source_section: str | None = None
     context: str | None = None
 
@@ -67,13 +71,21 @@ class IndexedChunk(BaseModel):
 
 
 class Evidence(BaseModel):
+    """One piece of candidate evidence returned to the caller.
+
+    ``rank_score`` is the reciprocal-rank-fusion score that produced the ordering. It is
+    a ranking artefact, not a similarity: it is bounded by the number of matching
+    sources (roughly ``sources / 61``) and is not comparable across queries. Use
+    ``match_sources`` to judge how many independent paths found this evidence.
+    """
+
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     path: str
     title: str
     section: str
     snippet: str
-    score: float
+    rank_score: float
     match_sources: tuple[MatchSource, ...]
     modified_at: datetime
     frontmatter: Frontmatter
@@ -89,6 +101,9 @@ class ContextResult(BaseModel):
     degraded: tuple[str, ...] = ()
     results: tuple[Evidence, ...] = ()
     truncated: bool = False
+    # False means nothing cleared the relevance bar (or nothing matched at all). Callers
+    # should report "not found" rather than treating an empty list as a weak answer.
+    matched: bool = False
 
 
 def timestamp_from_ns(value: int) -> datetime:

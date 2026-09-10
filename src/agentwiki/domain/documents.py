@@ -7,6 +7,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 type Frontmatter = dict[str, object]
 
+# The single reserved Wiki control file: frontmatter carries the rules, the body is
+# returned to agents as guidance. It is never indexed as a normal document.
+RESERVED_FILE = "AGENTWIKI.md"
+
 
 class DocumentPath(BaseModel):
     """A normalized Markdown path relative to the configured Wiki root."""
@@ -61,11 +65,6 @@ class DocumentFingerprint(NamedTuple):
     document_id: str | None = None
 
 
-class DocumentReadFailure(NamedTuple):
-    path: str
-    reason: str
-
-
 class SyncReport(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -76,3 +75,9 @@ class SyncReport(BaseModel):
     vectors_ready: int = 0
     vectors_pending: int = 0
     degraded: tuple[str, ...] = ()
+    # Identity of the document set this report describes; unchanged means the caller
+    # was served from the existing projection without touching the database.
+    generation: str = ""
+    # False means this index has never completed a full pass, so an empty projection is
+    # "not indexed yet" rather than "the Wiki has no documents".
+    indexed_once: bool = False

@@ -4,7 +4,17 @@ __pycache__/
 .build/
 .dist/
 .pytest_cache/
+.ruff_cache/
 .venv/
 .DS_Store
+
+# coverage.py output
+.coverage
+.coverage.*
+htmlcov/
+
+# onnxruntime (transitively pulled in by fastembed) drops a session file in CWD
+:memory:.ses
+*.ses
 
 .agentwiki/**

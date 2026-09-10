@@ -84,6 +84,7 @@ def query_wiki(
             else ()
         ),
         metadata_filters=_metadata(metadata),
+        min_similarity=Settings.load().min_similarity,
     )
 
     async def retrieve(runtime: AgentWikiRuntime) -> dict[str, object]:

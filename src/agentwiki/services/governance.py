@@ -1,21 +1,27 @@
 """Wiki organization rules and deterministic validation."""
 
 from fnmatch import fnmatch
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 import re
 from typing import Any
 
 import yaml
 
-from agentwiki.domain.documents import DocumentDescriptor, DocumentPath, WikiDocument
+from agentwiki.domain.documents import (
+    RESERVED_FILE,
+    DocumentDescriptor,
+    DocumentPath,
+    WikiDocument,
+)
+from agentwiki.domain.formatting import format_markdown
 from agentwiki.domain.governance import (
     KnownTag,
     ValidationIssue,
     ValidationReport,
     WikiRules,
 )
+from agentwiki.domain.scope import normalize_scope
 from agentwiki.domain.tags import canonicalize_tag, is_valid_tag
-from agentwiki.markdown.formatting import format_markdown
 from agentwiki.services.ports import WikiLibrary
 
 
@@ -24,15 +30,28 @@ class GovernanceService:
 
     def __init__(self, library: WikiLibrary) -> None:
         self.library = library
+        # Cached only to avoid re-reading every document on each rules call; invalidated
+        # as soon as the control file's size or mtime changes.
+        self._tag_cache_key: tuple[int, int] | None = None
+        self._tag_cache: tuple[KnownTag, ...] | None = None
 
     def get_wiki_rules(self, scope: str = "") -> WikiRules:
-        scope = self._scope(scope)
+        scope = normalize_scope(scope)
         rules = self._load_rules()
-        documents = self._read_documents(self.library.descriptors())
-        return self._effective_rules(rules, scope, self._known_tags(documents, rules))
+        return self._effective_rules(rules, scope, self._known_tags_for(rules))
 
     def get_tag_aliases(self) -> dict[str, tuple[str, ...]]:
         return self._load_rules().tag_aliases
+
+    def _known_tags_for(self, rules: WikiRules) -> tuple[KnownTag, ...]:
+        """Return the tag catalogue, recomputed only when the control file changes."""
+        key = (rules.source_modified_at_ns, rules.source_size)
+        if self._tag_cache is not None and self._tag_cache_key == key:
+            return self._tag_cache
+        known = self._known_tags(self._read_documents(self.library.descriptors()), rules)
+        self._tag_cache_key = key
+        self._tag_cache = known
+        return known
 
     def _effective_rules(
         self,
@@ -144,23 +163,36 @@ class GovernanceService:
         )
 
     def _load_rules(self) -> WikiRules:
-        data: dict[str, Any] = {}
-        rules_text = self.library.reserved_text("AGENTWIKI.md")
-        guide = ""
-        if rules_text:
-            guide, frontmatter = self.library.parse(rules_text)
-            data = frontmatter or {}
-            if not isinstance(data, dict):
-                raise ValueError("AGENTWIKI.md frontmatter must be a YAML mapping")
-        else:
-            legacy_rules = self.library.reserved_text("context.yaml")
-            if legacy_rules:
-                parsed = yaml.safe_load(legacy_rules) or {}
-                if not isinstance(parsed, dict):
-                    raise ValueError("agentwiki/context.yaml must be a YAML mapping")
-                data = parsed
-                guide = self.library.reserved_text("guide.md")
-        return WikiRules.model_validate({**data, "guide_content": guide})
+        """Read the single supported control file: ``AGENTWIKI.md``.
+
+        Rules live in its frontmatter and the body becomes ``guide_content``. When the
+        file is absent the Wiki simply has no rules, so validation reports nothing. The
+        returned rules carry the control file's size and mtime so callers can tell
+        whether a cached copy has gone stale.
+        """
+        rules_text = self.library.reserved_text()
+        if not rules_text:
+            return WikiRules()
+        guide, frontmatter = self.library.parse(rules_text)
+        data: dict[str, Any] = frontmatter or {}
+        if not isinstance(data, dict):
+            raise ValueError("AGENTWIKI.md frontmatter must be a YAML mapping")
+        modified_at_ns, size = self._control_file_identity()
+        return WikiRules.model_validate(
+            {
+                **data,
+                "guide_content": guide,
+                "source_modified_at_ns": modified_at_ns,
+                "source_size": size,
+            }
+        )
+
+    def _control_file_identity(self) -> tuple[int, int]:
+        try:
+            descriptor = self.library.descriptor(DocumentPath(value=RESERVED_FILE))
+        except (OSError, ValueError):
+            return 0, 0
+        return descriptor.modified_at_ns, descriptor.size
 
     def _descriptor_for(self, path: str) -> DocumentDescriptor:
         document_path = DocumentPath(value=path)
@@ -287,15 +319,3 @@ class GovernanceService:
     @staticmethod
     def _matches(pattern: str, path: str) -> bool:
         return fnmatch(path, pattern) or path.startswith(pattern.rstrip("/") + "/")
-
-    @staticmethod
-    def _scope(value: str) -> str:
-        if value.startswith(("/", "\\")):
-            raise ValueError("scope must stay inside the Wiki root")
-        normalized = value.replace("\\", "/").strip("/")
-        if not normalized or normalized == ".":
-            return ""
-        path = PurePosixPath(normalized)
-        if path.is_absolute() or ".." in path.parts:
-            raise ValueError("scope must stay inside the Wiki root")
-        return path.as_posix()
