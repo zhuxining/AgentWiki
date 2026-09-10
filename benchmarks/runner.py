@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 import hashlib
 import json
+import os
 from pathlib import Path
 import platform
 import subprocess
@@ -82,6 +83,31 @@ def inspect_corpus(root: Path) -> CorpusManifest:
     return CorpusManifest(len(descriptors), total_bytes, digest.hexdigest(), version)
 
 
+def apply_fixture_mtimes(root: Path) -> int:
+    """Apply a corpus-declared timeline so recency queries are reproducible.
+
+    Git does not preserve modification times: a fresh clone, a checkout, or a single edit
+    makes files look newly modified, which reshuffles every ``recent`` result. A corpus may
+    pin its timeline in ``MTIMES.json`` (relative path -> unix seconds); applying it before
+    indexing restores a deterministic order. Corpora without that file are left untouched.
+    """
+    manifest_path = root / "MTIMES.json"
+    if not manifest_path.is_file():
+        return 0
+    declared = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if not isinstance(declared, dict):
+        raise ValueError(f"MTIMES.json must contain an object: {manifest_path}")
+    applied = 0
+    for relative, seconds in declared.items():
+        target = root / str(relative)
+        if not target.is_file():
+            raise ValueError(f"MTIMES.json references a missing file: {relative}")
+        timestamp = float(seconds)
+        os.utime(target, (timestamp, timestamp))
+        applied += 1
+    return applied
+
+
 async def run_benchmark(
     corpus: Path,
     queries: Sequence[BenchmarkQuery],
@@ -98,6 +124,7 @@ async def run_benchmark(
     if repeats < 1:
         raise ValueError("repeats must be at least 1")
 
+    apply_fixture_mtimes(corpus)
     manifest = inspect_corpus(corpus)
     provider: EmbeddingProvider | None = None
     if mode == "hybrid":

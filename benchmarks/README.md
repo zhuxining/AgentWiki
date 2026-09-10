@@ -69,7 +69,8 @@ git -C /private/tmp/agentwiki-public-corpus/mdn-content \
   Global Objects 子集，用于快速比较 keyword 和 hybrid；
 - [`zh-team-wiki.jsonl`](queries/zh-team-wiki.jsonl)：中文团队 Wiki 集。**该集带 `section`
   级标注**，覆盖 `keyword`、`cross_document`、`recent`、`filter`、`long_document` 和
-  `no_answer`，用于验证中文检索链路；语料需要自备（见下节）。
+  `no_answer`，用于验证中文检索链路。语料已随仓库固化在
+  [`benchmarks/corpora/zh-team-wiki/`](corpora/zh-team-wiki/)，其定位与归因结果见第 6.4 节。
 
 ### 中文查询集的能力边界
 
@@ -240,25 +241,90 @@ hybrid 的 653.1 秒包含模型下载/加载和首次向量化，不能与 keyw
 返回最近似结果，说明当前检索没有 semantic similarity threshold；这是后续产品策略和
 性能优化的候选问题，不应在 benchmark 文档中当作已解决能力。
 
-### 中文团队 Wiki（section 级标注）
+### 中文团队 Wiki（section 级标注，fixture 语料）
 
-用 `queries/zh-team-wiki.jsonl` 对一份自建的 5 篇中文 Wiki（含 `AGENTWIKI.md`、
-decisions/guides/reference/operations 四类目录）运行 keyword 模式：
+**语料现状**：本节早期引用的 5 篇自建中文 Wiki 从未提交进仓库，只存在于当时的临时目录，
+现已丢失，因此当时那版数字不可复现。语料现已固化在
+[`benchmarks/corpora/zh-team-wiki/`](corpora/zh-team-wiki/)，共 5 篇文档。
+
+**它的定位是回归 fixture，不是效果证明。** 该语料按 qrels 里已经写死的 path 和 section
+反向构造，存在向评测集拟合的风险，因此只能用于**回归**和**失败归因**；要回答"效果好不好"，
+必须在真实团队 Wiki 上重复同样的流程。
+
+keyword 模式结果：
 
 | 指标 | 结果 |
 | --- | ---: |
-| 文档 / chunk | 5 / 11 |
-| rebuild | 14 ms |
-| 查询 p50 / p95 | 1.9 ms / 2.4 ms |
-| Recall@1 / @3 / @5 | 0.929 / 1.000 / 1.000 |
-| recall_strict@5 | 0.857 |
-| MRR@5 | 0.964 |
-| nDCG@5 | 0.947 |
-| section_precision@5 | 0.898 |
+| 文档 / chunk | 5 / 20 |
+| rebuild | 20 ms |
+| 查询 p50 / p95 | 1.6 ms / 2.0 ms |
+| Recall@1 / @3 / @5 | 0.714 / 0.786 / 0.786 |
+| recall_strict@5 | 0.643 |
+| MRR@5 | 0.750 |
+| nDCG@5 | 0.744 |
+| section_precision@5 | 0.614 |
 | 无答案误报率 | 0 |
 
-覆盖类别：`keyword`、`cross_document`、`recent`、`filter`、`long_document`、`no_answer`。
-这只是 14 条可回答查询的小规模集，用于回归验证中文链路，不作为产品质量门槛。
+**recent 查询必须固定 mtime。** `recent` 策略按文件修改时间排序，而 git 不保留 mtime：
+一次 clone、checkout 或编辑就会重排结果。实测编辑 `reference/configuration.md` 之后，
+`zh-recent-empty-query` 的首位结果发生变化，`recall@1` 从 0.714 掉到 0.643。fixture 因此用
+[`MTIMES.json`](corpora/zh-team-wiki/MTIMES.json) 声明自己的时间线，runner 在索引前应用它；
+只有声明了该文件的语料才会被改动。固定之后质量指标与逐条检索结果**完全可复现**，只有
+延迟和 rebuild 耗时仍会抖动。
+
+### 检索损失归因
+
+`recall@5 = 0.786` 只说明"有东西没返回"，不说明是哪一层丢的。`benchmarks/attribution.py`
+把每一条 gold 标注定位到具体管线层：
+
+```bash
+uv run python -m benchmarks.attribution \
+  --corpus benchmarks/corpora/zh-team-wiki \
+  --queries benchmarks/queries/zh-team-wiki.jsonl \
+  --mode keyword --k 5 \
+  --output benchmarks/baselines/zh-team-wiki.attribution.keyword.json
+```
+
+17 条标注的归因结果：
+
+| 层 | 数量 | 含义 |
+| --- | ---: | --- |
+| `retrieved` | 12 | 精确命中且排在 top-5 |
+| `granularity_only` | 2 | 返回了 gold 章节的**子章节** |
+| `wrong_section` | 3 | 文档命中，但章节不对 |
+| 其余层 | 0 | 无 qrels 过期、无未索引、无切块缺失、无未召回 |
+
+两个上限比率：
+
+- **index ceiling = 1.0**：所有 gold 章节都已切块并进入索引，**切块层零损失**；
+- **document recall = 1.0**：所有 gold 文档都进入了返回结果，**召回层零损失**。
+
+**结论：5 条未命中全部是标注口径问题，没有一条是检索链路缺陷。** 具体分两类：
+
+1. `granularity_only`（2 条）：qrels 标在 `配置说明 / 配置字段`，检索返回
+   `配置说明 / 配置字段 / 索引路径`——内容正是所要的，但 `metrics.relevance_grade` 用
+   section 字符串**精确相等**比对，把它判成 grade 0。这是**评分器的粒度缺陷**，不是检索失败。
+2. `wrong_section`（3 条）：
+   - `zh-cross-document` 未命中的是 grade 2 辅助证据，主证据（grade 3）已经排在第 1 位，
+     辅助证据缺席属正常；
+   - `zh-scope-filter` 是空查询 + `recent` 策略，返回的是文档级 chunk，而 qrels 标到了 H2。
+     空查询下 recent 路没有相关性信号，返回哪个 chunk 是任意的，**用 section 级标注评
+     recent 查询本身不成立**——同一集合里的 `zh-config-changelog` 与
+     `zh-recent-empty-query` 用 path 级标注才是正确做法。
+
+由此得到三条待办，**都不在检索算法里**：`relevance_grade` 应把「gold 章节的子章节」视为
+命中并单列该口径；`zh-scope-filter` 的标注应降为 path 级；`zh-cross-document` 的 grade 2
+辅助证据不应计入损失。
+
+**归因过程同时暴露了两个真实缺陷：**
+
+- `summarize_quality` 的**总体**指标正确排除了 `expected_no_answer`，但 category /
+  difficulty **分组**没有排除，no_answer 以 0 分拉低它所属的分组。fixture 上
+  `difficulty.medium.recall@1` 曾报 `6/9 = 0.667`，正确值是 `6/8 = 0.75`。已修复，并由
+  `test_quality_summary_excludes_no_answer_cases_from_group_metrics` 守住。
+- **no_answer 用例的前提是语料里确实不存在该主题。** 重建 fixture 时「备份」一词曾意外
+  出现在 `reference/configuration.md`，使 `zh-no-answer`（"Kubernetes etcd 备份"）的误报率
+  虚高到 1.0。`attribution.py` 的 `no_answer_contamination` 字段现在会自动报出这类污染。
 
 **延迟口径**：`latency_ms` 包住 `get_wiki_context`，其中包含查询前的增量确认
 （`ensure_fresh`）。小语料下增量确认已由目录级缓存短路，因此该值接近纯检索耗时；
@@ -267,6 +333,7 @@ decisions/guides/reference/operations 四类目录）运行 keyword 模式：
 ## 7. 下一次复现清单
 
 1. 固定 corpus 路径、上游 commit、英文子目录和 SHA-256 manifest；
+1. 若查询集含 `recent` 用例，确认语料带有 `MTIMES.json`，否则结果会随文件 mtime 漂移；
 1. 检查查询集是否仍引用存在的相对路径和完整 section 名称；
 1. 在同一个 corpus、同一份 qrels 上分别运行 keyword 与 hybrid；
 1. 质量集和性能集分开记录，首次模型下载不纳入查询 p50/p95；

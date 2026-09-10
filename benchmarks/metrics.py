@@ -122,9 +122,9 @@ def summarize_quality(
     summary.update(_quality_values(answerable_cases, ks))
 
     groups: list[tuple[str, str]] = [
-        ("category", str(query.category)) for query, _ in cases
+        ("category", str(query.category)) for query, _ in answerable_cases
     ]
-    groups.extend(("difficulty", str(query.difficulty)) for query, _ in cases)
+    groups.extend(("difficulty", str(query.difficulty)) for query, _ in answerable_cases)
     for group_name, group_value in sorted(set(groups)):
         summary.update(
             {
@@ -132,7 +132,7 @@ def summarize_quality(
                 for key, value in _quality_values(
                     [
                         (query, results)
-                        for query, results in cases
+                        for query, results in answerable_cases
                         if getattr(query, group_name) == group_value
                     ],
                     ks,

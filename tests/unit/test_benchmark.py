@@ -13,6 +13,7 @@ from benchmarks.metrics import (
     summarize_quality,
 )
 from benchmarks.runner import (
+    apply_fixture_mtimes,
     inspect_corpus,
     load_queries,
     main,
@@ -111,6 +112,27 @@ def test_quality_summary_excludes_no_answer_cases_from_main_metrics() -> None:
     assert summary["no_answer_false_positive_rate"] == pytest.approx(1.0)
 
 
+def test_quality_summary_excludes_no_answer_cases_from_group_metrics() -> None:
+    """A no-answer case must not dilute the group it shares with answerable cases.
+
+    Both queries below are ``difficulty="medium"``. Counting the no-answer case would
+    score it 0 (it has no judgments) and report 0.5 instead of 1.0.
+    """
+    answerable = _query()
+    no_answer = _query(id="no-answer", relevance=(), expected_no_answer=True)
+    summary = summarize_quality(
+        [
+            (answerable, [_evidence("auth.md", "Tokens")]),
+            (no_answer, [_evidence("wrong.md", "Other")]),
+        ],
+        ks=(1,),
+    )
+    assert summary["difficulty.medium.recall@1"] == pytest.approx(1.0)
+    assert summary["difficulty.medium.mrr@1"] == pytest.approx(1.0)
+    assert summary["category.keyword.recall@1"] == pytest.approx(1.0)
+    assert "category.no_answer.recall@1" not in summary
+
+
 async def test_run_benchmark_uses_real_runtime_and_writes_report_data(tmp_path) -> None:
     root = tmp_path / "wiki"
     root.mkdir()
@@ -158,3 +180,32 @@ def test_benchmark_cli_writes_json_and_markdown_reports(tmp_path) -> None:
     )
     assert output.is_file()
     assert output.with_suffix(".md").is_file()
+
+
+def test_apply_fixture_mtimes_pins_a_deterministic_recency_order(tmp_path) -> None:
+    """Git does not preserve mtimes, so recency queries need a declared timeline."""
+    root = tmp_path / "wiki"
+    root.mkdir()
+    (root / "a.md").write_text("a\n", encoding="utf-8")
+    (root / "b.md").write_text("b\n", encoding="utf-8")
+    (root / "MTIMES.json").write_text('{"a.md": 1000, "b.md": 2000}\n', encoding="utf-8")
+    assert apply_fixture_mtimes(root) == 2
+    assert (root / "a.md").stat().st_mtime == pytest.approx(1000)
+    assert (root / "b.md").stat().st_mtime == pytest.approx(2000)
+
+
+def test_apply_fixture_mtimes_leaves_an_undeclared_corpus_alone(tmp_path) -> None:
+    root = tmp_path / "wiki"
+    root.mkdir()
+    (root / "a.md").write_text("a\n", encoding="utf-8")
+    before = (root / "a.md").stat().st_mtime
+    assert apply_fixture_mtimes(root) == 0
+    assert (root / "a.md").stat().st_mtime == pytest.approx(before)
+
+
+def test_apply_fixture_mtimes_rejects_a_missing_target(tmp_path) -> None:
+    root = tmp_path / "wiki"
+    root.mkdir()
+    (root / "MTIMES.json").write_text('{"gone.md": 1}\n', encoding="utf-8")
+    with pytest.raises(ValueError, match=r"gone\.md"):
+        apply_fixture_mtimes(root)

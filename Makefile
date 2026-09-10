@@ -2,7 +2,7 @@
 # and a pipeline run cannot drift apart.
 .DEFAULT_GOAL := help
 .PHONY: help install sync check lint type test test-unit test-quiet \
-        watch rules validate rebuild-index benchmark clean dist
+        watch rules validate rebuild-index benchmark attribution clean dist
 
 UV ?= uv
 PYTEST_FLAGS ?=
@@ -43,6 +43,15 @@ benchmark: ## Run the Chinese retrieval benchmark against a corpus (CORPUS=..., 
 		--queries "$(or $(QUERIES),benchmarks/queries/zh-team-wiki.jsonl)" \
 		--mode "$(or $(MODE),keyword)" \
 		--output "$(or $(OUTPUT),/tmp/agentwiki-benchmark.json)"
+
+attribution: ## Attribute retrieval loss to a pipeline layer (CORPUS=..., QUERIES=...)
+	@test -n "$(CORPUS)" || (echo "set CORPUS=/path/to/wiki" && exit 1)
+	$(UV) run python -m benchmarks.attribution \
+		--corpus "$(CORPUS)" \
+		--queries "$(or $(QUERIES),benchmarks/queries/zh-team-wiki.jsonl)" \
+		--mode "$(or $(MODE),keyword)" \
+		--k "$(or $(K),5)" \
+		--output "$(or $(OUTPUT),/tmp/agentwiki-attribution.json)"
 
 watch: ## Watch Markdown changes and keep the index fresh
 	$(UV) run agentwiki watch-index

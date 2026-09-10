@@ -1,0 +1,1294 @@
+{
+  "run_id": "20260910T171218Z",
+  "environment": {
+    "corpus": "/Users/zhuxining/Code/AgentWiki/benchmarks/corpora/zh-team-wiki",
+    "corpus_version": "c70f6b33905854d823ce96aa7b64fcb0fcb407f2ed3a0bc83a87e06606999ee2",
+    "git_revision": "ac4ad43b5b0ba6e312fee539d1286019de835d2d",
+    "python_version": "3.14.7",
+    "platform": "macOS-27.0-arm64-arm-64bit-Mach-O",
+    "mode": "keyword",
+    "embedding_model": null
+  },
+  "index": {
+    "documents": 5,
+    "bytes": 8613,
+    "chunks": 20,
+    "vectors": 0,
+    "rebuild_seconds": 0.02356708300067112,
+    "indexed": 5,
+    "degraded": 0
+  },
+  "quality": {
+    "recall@1": 0.7142857142857143,
+    "recall_strict@1": 0.5714285714285714,
+    "document_recall@1": 0.9285714285714286,
+    "mrr@1": 0.7142857142857143,
+    "ndcg@1": 0.7142857142857143,
+    "section_precision@1": 0.7142857142857143,
+    "recall@3": 0.7857142857142857,
+    "recall_strict@3": 0.6428571428571429,
+    "document_recall@3": 1.0,
+    "mrr@3": 0.75,
+    "ndcg@3": 0.7441488826116022,
+    "section_precision@3": 0.6428571428571429,
+    "recall@5": 0.7857142857142857,
+    "recall_strict@5": 0.6428571428571429,
+    "document_recall@5": 1.0,
+    "mrr@5": 0.75,
+    "ndcg@5": 0.7441488826116022,
+    "section_precision@5": 0.6142857142857142,
+    "recall@10": 0.7857142857142857,
+    "recall_strict@10": 0.6428571428571429,
+    "document_recall@10": 1.0,
+    "mrr@10": 0.75,
+    "ndcg@10": 0.7441488826116022,
+    "section_precision@10": 0.6119047619047618,
+    "category.cross_document.recall@1": 1.0,
+    "category.cross_document.recall_strict@1": 1.0,
+    "category.cross_document.document_recall@1": 1.0,
+    "category.cross_document.mrr@1": 1.0,
+    "category.cross_document.ndcg@1": 1.0,
+    "category.cross_document.section_precision@1": 1.0,
+    "category.cross_document.recall@3": 1.0,
+    "category.cross_document.recall_strict@3": 1.0,
+    "category.cross_document.document_recall@3": 1.0,
+    "category.cross_document.mrr@3": 1.0,
+    "category.cross_document.ndcg@3": 0.7871546029909718,
+    "category.cross_document.section_precision@3": 1.0,
+    "category.cross_document.recall@5": 1.0,
+    "category.cross_document.recall_strict@5": 1.0,
+    "category.cross_document.document_recall@5": 1.0,
+    "category.cross_document.mrr@5": 1.0,
+    "category.cross_document.ndcg@5": 0.7871546029909718,
+    "category.cross_document.section_precision@5": 1.0,
+    "category.cross_document.recall@10": 1.0,
+    "category.cross_document.recall_strict@10": 1.0,
+    "category.cross_document.document_recall@10": 1.0,
+    "category.cross_document.mrr@10": 1.0,
+    "category.cross_document.ndcg@10": 0.7871546029909718,
+    "category.cross_document.section_precision@10": 1.0,
+    "category.filter.recall@1": 0.5,
+    "category.filter.recall_strict@1": 0.5,
+    "category.filter.document_recall@1": 1.0,
+    "category.filter.mrr@1": 0.5,
+    "category.filter.ndcg@1": 0.5,
+    "category.filter.section_precision@1": 0.5,
+    "category.filter.recall@3": 0.5,
+    "category.filter.recall_strict@3": 0.5,
+    "category.filter.document_recall@3": 1.0,
+    "category.filter.mrr@3": 0.5,
+    "category.filter.ndcg@3": 0.5,
+    "category.filter.section_precision@3": 0.5,
+    "category.filter.recall@5": 0.5,
+    "category.filter.recall_strict@5": 0.5,
+    "category.filter.document_recall@5": 1.0,
+    "category.filter.mrr@5": 0.5,
+    "category.filter.ndcg@5": 0.5,
+    "category.filter.section_precision@5": 0.5,
+    "category.filter.recall@10": 0.5,
+    "category.filter.recall_strict@10": 0.5,
+    "category.filter.document_recall@10": 1.0,
+    "category.filter.mrr@10": 0.5,
+    "category.filter.ndcg@10": 0.5,
+    "category.filter.section_precision@10": 0.5,
+    "category.keyword.recall@1": 0.625,
+    "category.keyword.recall_strict@1": 0.5,
+    "category.keyword.document_recall@1": 0.875,
+    "category.keyword.mrr@1": 0.625,
+    "category.keyword.ndcg@1": 0.625,
+    "category.keyword.section_precision@1": 0.625,
+    "category.keyword.recall@3": 0.75,
+    "category.keyword.recall_strict@3": 0.625,
+    "category.keyword.document_recall@3": 1.0,
+    "category.keyword.mrr@3": 0.6875,
+    "category.keyword.ndcg@3": 0.7038662191964322,
+    "category.keyword.section_precision@3": 0.5416666666666666,
+    "category.keyword.recall@5": 0.75,
+    "category.keyword.recall_strict@5": 0.625,
+    "category.keyword.document_recall@5": 1.0,
+    "category.keyword.mrr@5": 0.6875,
+    "category.keyword.ndcg@5": 0.7038662191964322,
+    "category.keyword.section_precision@5": 0.525,
+    "category.keyword.recall@10": 0.75,
+    "category.keyword.recall_strict@10": 0.625,
+    "category.keyword.document_recall@10": 1.0,
+    "category.keyword.mrr@10": 0.6875,
+    "category.keyword.ndcg@10": 0.7038662191964322,
+    "category.keyword.section_precision@10": 0.5208333333333334,
+    "category.long_document.recall@1": 1.0,
+    "category.long_document.recall_strict@1": 1.0,
+    "category.long_document.document_recall@1": 1.0,
+    "category.long_document.mrr@1": 1.0,
+    "category.long_document.ndcg@1": 1.0,
+    "category.long_document.section_precision@1": 1.0,
+    "category.long_document.recall@3": 1.0,
+    "category.long_document.recall_strict@3": 1.0,
+    "category.long_document.document_recall@3": 1.0,
+    "category.long_document.mrr@3": 1.0,
+    "category.long_document.ndcg@3": 1.0,
+    "category.long_document.section_precision@3": 1.0,
+    "category.long_document.recall@5": 1.0,
+    "category.long_document.recall_strict@5": 1.0,
+    "category.long_document.document_recall@5": 1.0,
+    "category.long_document.mrr@5": 1.0,
+    "category.long_document.ndcg@5": 1.0,
+    "category.long_document.section_precision@5": 1.0,
+    "category.long_document.recall@10": 1.0,
+    "category.long_document.recall_strict@10": 1.0,
+    "category.long_document.document_recall@10": 1.0,
+    "category.long_document.mrr@10": 1.0,
+    "category.long_document.ndcg@10": 1.0,
+    "category.long_document.section_precision@10": 1.0,
+    "category.recent.recall@1": 1.0,
+    "category.recent.recall_strict@1": 0.5,
+    "category.recent.document_recall@1": 1.0,
+    "category.recent.mrr@1": 1.0,
+    "category.recent.ndcg@1": 1.0,
+    "category.recent.section_precision@1": 1.0,
+    "category.recent.recall@3": 1.0,
+    "category.recent.recall_strict@3": 0.5,
+    "category.recent.document_recall@3": 1.0,
+    "category.recent.mrr@3": 1.0,
+    "category.recent.ndcg@3": 1.0,
+    "category.recent.section_precision@3": 0.8333333333333333,
+    "category.recent.recall@5": 1.0,
+    "category.recent.recall_strict@5": 0.5,
+    "category.recent.document_recall@5": 1.0,
+    "category.recent.mrr@5": 1.0,
+    "category.recent.ndcg@5": 1.0,
+    "category.recent.section_precision@5": 0.7,
+    "category.recent.recall@10": 1.0,
+    "category.recent.recall_strict@10": 0.5,
+    "category.recent.document_recall@10": 1.0,
+    "category.recent.mrr@10": 1.0,
+    "category.recent.ndcg@10": 1.0,
+    "category.recent.section_precision@10": 0.7,
+    "difficulty.easy.recall@1": 0.5,
+    "difficulty.easy.recall_strict@1": 0.25,
+    "difficulty.easy.document_recall@1": 1.0,
+    "difficulty.easy.mrr@1": 0.5,
+    "difficulty.easy.ndcg@1": 0.5,
+    "difficulty.easy.section_precision@1": 0.5,
+    "difficulty.easy.recall@3": 0.5,
+    "difficulty.easy.recall_strict@3": 0.25,
+    "difficulty.easy.document_recall@3": 1.0,
+    "difficulty.easy.mrr@3": 0.5,
+    "difficulty.easy.ndcg@3": 0.5,
+    "difficulty.easy.section_precision@3": 0.41666666666666663,
+    "difficulty.easy.recall@5": 0.5,
+    "difficulty.easy.recall_strict@5": 0.25,
+    "difficulty.easy.document_recall@5": 1.0,
+    "difficulty.easy.mrr@5": 0.5,
+    "difficulty.easy.ndcg@5": 0.5,
+    "difficulty.easy.section_precision@5": 0.35,
+    "difficulty.easy.recall@10": 0.5,
+    "difficulty.easy.recall_strict@10": 0.25,
+    "difficulty.easy.document_recall@10": 1.0,
+    "difficulty.easy.mrr@10": 0.5,
+    "difficulty.easy.ndcg@10": 0.5,
+    "difficulty.easy.section_precision@10": 0.35,
+    "difficulty.hard.recall@1": 1.0,
+    "difficulty.hard.recall_strict@1": 1.0,
+    "difficulty.hard.document_recall@1": 1.0,
+    "difficulty.hard.mrr@1": 1.0,
+    "difficulty.hard.ndcg@1": 1.0,
+    "difficulty.hard.section_precision@1": 1.0,
+    "difficulty.hard.recall@3": 1.0,
+    "difficulty.hard.recall_strict@3": 1.0,
+    "difficulty.hard.document_recall@3": 1.0,
+    "difficulty.hard.mrr@3": 1.0,
+    "difficulty.hard.ndcg@3": 1.0,
+    "difficulty.hard.section_precision@3": 0.75,
+    "difficulty.hard.recall@5": 1.0,
+    "difficulty.hard.recall_strict@5": 1.0,
+    "difficulty.hard.document_recall@5": 1.0,
+    "difficulty.hard.mrr@5": 1.0,
+    "difficulty.hard.ndcg@5": 1.0,
+    "difficulty.hard.section_precision@5": 0.75,
+    "difficulty.hard.recall@10": 1.0,
+    "difficulty.hard.recall_strict@10": 1.0,
+    "difficulty.hard.document_recall@10": 1.0,
+    "difficulty.hard.mrr@10": 1.0,
+    "difficulty.hard.ndcg@10": 1.0,
+    "difficulty.hard.section_precision@10": 0.75,
+    "difficulty.medium.recall@1": 0.75,
+    "difficulty.medium.recall_strict@1": 0.625,
+    "difficulty.medium.document_recall@1": 0.875,
+    "difficulty.medium.mrr@1": 0.75,
+    "difficulty.medium.ndcg@1": 0.75,
+    "difficulty.medium.section_precision@1": 0.75,
+    "difficulty.medium.recall@3": 0.875,
+    "difficulty.medium.recall_strict@3": 0.75,
+    "difficulty.medium.document_recall@3": 1.0,
+    "difficulty.medium.mrr@3": 0.8125,
+    "difficulty.medium.ndcg@3": 0.8022605445703037,
+    "difficulty.medium.section_precision@3": 0.7291666666666666,
+    "difficulty.medium.recall@5": 0.875,
+    "difficulty.medium.recall_strict@5": 0.75,
+    "difficulty.medium.document_recall@5": 1.0,
+    "difficulty.medium.mrr@5": 0.8125,
+    "difficulty.medium.ndcg@5": 0.8022605445703037,
+    "difficulty.medium.section_precision@5": 0.7125,
+    "difficulty.medium.recall@10": 0.875,
+    "difficulty.medium.recall_strict@10": 0.75,
+    "difficulty.medium.document_recall@10": 1.0,
+    "difficulty.medium.mrr@10": 0.8125,
+    "difficulty.medium.ndcg@10": 0.8022605445703037,
+    "difficulty.medium.section_precision@10": 0.7083333333333334,
+    "no_answer_false_positive_rate": 0.0
+  },
+  "latency_ms": {
+    "p50": 2.2970840000198223,
+    "p95": 3.134750001481735,
+    "p99": 3.8235499983420587,
+    "min": 1.7526250012451783,
+    "max": 3.995749997557141
+  },
+  "degradation": {
+    "query_degraded_rate": 0.8666666666666667,
+    "semantic_unavailable_rate": 0.8666666666666667,
+    "query_failure_rate": 0.0
+  },
+  "queries": [
+    {
+      "query_id": "zh-config-file-location",
+      "category": "keyword",
+      "difficulty": "easy",
+      "latency_ms": 3.995749997557141,
+      "strategy": "keyword",
+      "degraded": [
+        "semantic_unavailable"
+      ],
+      "result_paths": [
+        "reference/configuration.md"
+      ],
+      "result_sections": [
+        "配置说明 / 配置文件位置"
+      ],
+      "grades": [
+        3
+      ],
+      "context_result": {
+        "query": "配置文件位置",
+        "scope": "",
+        "strategy": "keyword",
+        "degraded": [
+          "semantic_unavailable"
+        ],
+        "results": [
+          {
+            "path": "reference/configuration.md",
+            "title": "配置参考",
+            "section": "配置说明 / 配置文件位置",
+            "snippet": "配置文件位置在用户配置目录下的 `~/.agentwiki/config.json`。首次运行时如果该文件不存在， 程序会写入一份默认配置，因此这个配置文件位置始终是可靠的入口。 解析顺序只有一步：读取 `~/.agentwiki/config.json`，用 Pydantic 校验，校验失败则启动报错 并指出字段名，不会静默回退到默认值。如果希望换一个配置文件位置，需要显式传入 `--config`，它只影响当前进程。",
+            "rank_score": 0.016393,
+            "match_sources": [
+              "keyword"
+            ],
+            "modified_at": "2025-01-01T00:00:00Z",
+            "frontmatter": {
+              "tags": [
+                "reference",
+                "configuration"
+              ],
+              "title": "配置参考",
+              "type": "reference"
+            },
+            "related": []
+          }
+        ],
+        "truncated": false,
+        "matched": true
+      },
+      "error": null
+    },
+    {
+      "query_id": "zh-config-fields",
+      "category": "keyword",
+      "difficulty": "easy",
+      "latency_ms": 2.2970840000198223,
+      "strategy": "keyword",
+      "degraded": [
+        "semantic_unavailable"
+      ],
+      "result_paths": [
+        "reference/configuration.md"
+      ],
+      "result_sections": [
+        "配置说明 / 配置字段 / 索引路径"
+      ],
+      "grades": [
+        0
+      ],
+      "context_result": {
+        "query": "索引路径",
+        "scope": "",
+        "strategy": "keyword",
+        "degraded": [
+          "semantic_unavailable"
+        ],
+        "results": [
+          {
+            "path": "reference/configuration.md",
+            "title": "配置参考",
+            "section": "配置说明 / 配置字段 / 索引路径",
+            "snippet": "`index_path` 决定 SQLite 派生索引写到哪里，默认是 `~/.agentwiki/index.sqlite3`。索引路径 可以指向任意可写目录，但必须和 Wiki 根目录分开——索引是可删除派生物，和 Markdown 事实源 混在一起会让归档策略变得难以判断。 单元测试和基准测试会显式传入临时索引路径，不污染用户的正式索引。",
+            "rank_score": 0.016393,
+            "match_sources": [
+              "keyword"
+            ],
+            "modified_at": "2025-01-01T00:00:00Z",
+            "frontmatter": {
+              "tags": [
+                "reference",
+                "configuration"
+              ],
+              "title": "配置参考",
+              "type": "reference"
+            },
+            "related": []
+          }
+        ],
+        "truncated": false,
+        "matched": true
+      },
+      "error": null
+    },
+    {
+      "query_id": "zh-config-embedding-model",
+      "category": "keyword",
+      "difficulty": "medium",
+      "latency_ms": 1.9031670017284341,
+      "strategy": "keyword",
+      "degraded": [
+        "semantic_unavailable"
+      ],
+      "result_paths": [
+        "reference/configuration.md"
+      ],
+      "result_sections": [
+        "配置说明 / 配置字段 / embedding_model"
+      ],
+      "grades": [
+        0
+      ],
+      "context_result": {
+        "query": "embedding_model 语义检索",
+        "scope": "",
+        "strategy": "keyword",
+        "degraded": [
+          "semantic_unavailable"
+        ],
+        "results": [
+          {
+            "path": "reference/configuration.md",
+            "title": "配置参考",
+            "section": "配置说明 / 配置字段 / embedding_model",
+            "snippet": "`embedding_model` 指定本地语义检索的模型标识，默认是 `BAAI/bge-small-zh-v1.5`。语义检索 依赖这个模型，把它留空则语义检索不可用，此时关键词检索仍然必须能正常工作。 换模型必须重新标定 `similarity_threshold`，因为不同模型的余弦相似度分布完全不同。曾经 出现过沿用英文模型阈值导致正确结果被全部拒绝的情况。",
+            "rank_score": 0.016393,
+            "match_sources": [
+              "keyword"
+            ],
+            "modified_at": "2025-01-01T00:00:00Z",
+            "frontmatter": {
+              "tags": [
+                "reference",
+                "configuration"
+              ],
+              "title": "配置参考",
+              "type": "reference"
+            },
+            "related": []
+          }
+        ],
+        "truncated": false,
+        "matched": true
+      },
+      "error": null
+    },
+    {
+      "query_id": "zh-config-changelog",
+      "category": "recent",
+      "difficulty": "medium",
+      "latency_ms": 2.765750003163703,
+      "strategy": "recent_hybrid",
+      "degraded": [
+        "semantic_unavailable"
+      ],
+      "result_paths": [
+        "reference/configuration.md"
+      ],
+      "result_sections": [
+        "配置说明 / 最近配置变化"
+      ],
+      "grades": [
+        3
+      ],
+      "context_result": {
+        "query": "最近 配置 变化",
+        "scope": "",
+        "strategy": "recent_hybrid",
+        "degraded": [
+          "semantic_unavailable"
+        ],
+        "results": [
+          {
+            "path": "reference/configuration.md",
+            "title": "配置参考",
+            "section": "配置说明 / 最近配置变化",
+            "snippet": "最近一次配置变化把默认 embedding 模型从英文单语模型换成了多语言模型，原因是中文改写 查询在英文模型下几乎无法命中。同一次变化把相似度阈值从 0.55 调到 0.30。 更早的一次配置变化引入了 `scope` 的层级匹配，让 `guides` 这样的范围可以覆盖其子目录。",
+            "rank_score": 0.021311,
+            "match_sources": [
+              "keyword",
+              "recency"
+            ],
+            "modified_at": "2025-01-01T00:00:00Z",
+            "frontmatter": {
+              "tags": [
+                "reference",
+                "configuration"
+              ],
+              "title": "配置参考",
+              "type": "reference"
+            },
+            "related": []
+          }
+        ],
+        "truncated": false,
+        "matched": true
+      },
+      "error": null
+    },
+    {
+      "query_id": "zh-trouble-tokenizer",
+      "category": "keyword",
+      "difficulty": "medium",
+      "latency_ms": 2.741124997555744,
+      "strategy": "keyword",
+      "degraded": [
+        "semantic_unavailable"
+      ],
+      "result_paths": [
+        "operations/troubleshooting.md"
+      ],
+      "result_sections": [
+        "故障排查 / 中文检索无结果"
+      ],
+      "grades": [
+        3
+      ],
+      "context_result": {
+        "query": "二元组 FTS5 分词",
+        "scope": "",
+        "strategy": "keyword",
+        "degraded": [
+          "semantic_unavailable"
+        ],
+        "results": [
+          {
+            "path": "operations/troubleshooting.md",
+            "title": "故障排查",
+            "section": "故障排查 / 中文检索无结果",
+            "snippet": "中文查询没有任何返回时，先确认 SQLite 是否启用了 FTS5。关键词检索对中文的处理方式是 把正文切成字符二元组并写入 `search_bigrams` 列，查询侧同样切成二元组后做匹配。 二元组方案不依赖分词词典，但要求查询的每个词元都在文档中被逐字找到：整句自然语言提问 会因为「如何」这类词不在文档中而整体不命中。查询应当写成与文档措辞一致的主题词。 如果确认 FTS5 可用、查询也是短主题词却仍无结果，检查索引是否真的包含目标文档： `wiki_documents` 里有记录、但 `wiki_chunks` 为空，说明切块阶段失败了。",
+            "rank_score": 0.016393,
+            "match_sources": [
+              "keyword"
+            ],
+            "modified_at": "2025-01-02T00:00:00Z",
+            "frontmatter": {
+              "tags": [
+                "operations",
+                "troubleshooting"
+              ],
+              "title": "故障排查",
+              "type": "note"
+            },
+            "related": []
+          }
+        ],
+        "truncated": false,
+        "matched": true
+      },
+      "error": null
+    },
+    {
+      "query_id": "zh-trouble-recall",
+      "category": "keyword",
+      "difficulty": "hard",
+      "latency_ms": 2.510124999389518,
+      "strategy": "keyword",
+      "degraded": [
+        "semantic_unavailable"
+      ],
+      "result_paths": [
+        "operations/troubleshooting.md",
+        "decisions/index-strategy.md"
+      ],
+      "result_sections": [
+        "故障排查 / 召回率过低",
+        "索引策略 / 相关文档"
+      ],
+      "grades": [
+        3,
+        0
+      ],
+      "context_result": {
+        "query": "候选池 去重 召回率",
+        "scope": "",
+        "strategy": "keyword",
+        "degraded": [
+          "semantic_unavailable"
+        ],
+        "results": [
+          {
+            "path": "operations/troubleshooting.md",
+            "title": "故障排查",
+            "section": "故障排查 / 召回率过低",
+            "snippet": "召回率过低通常不是 FTS5 的问题，而是候选池太窄。候选池由五路召回合并而成：精确标题、 关键词、语义、图扩展和近期变更。任何一路返回的候选都会进入候选池，再按排名融合排序。 排查时先看 `match_sources`：如果某条证据只有 `semantic` 一路来源，说明关键词那一路没有 覆盖它，问题多半在查询词与正文措辞不一致，而不是索引缺失。 去重发生在候选池合并之后。同一文档的相邻片段会被压成一条证据，因此候选池去重会减少 返回条数，但不会降低真实召回率——如果它确实降低了召回率，说明去重条件写得太宽。",
+            "rank_score": 0.016393,
+            "match_sources": [
+              "keyword"
+            ],
+            "modified_at": "2025-01-02T00:00:00Z",
+            "frontmatter": {
+              "tags": [
+                "operations",
+                "troubleshooting"
+              ],
+              "title": "故障排查",
+              "type": "note"
+            },
+            "related": []
+          },
+          {
+            "path": "decisions/index-strategy.md",
+            "title": "索引策略决策",
+            "section": "索引策略 / 相关文档",
+            "snippet": "- 配置项含义见 `reference/configuration.md`，特别是 `embedding_model` 与 `similarity_threshold` 的联动关系。 - 故障处置见 `operations/troubleshooting.md`，其中「召回率过低」一节解释了候选池与 去重的行为。 - 索引重建的进度与恢复标记由 `wiki_index_meta` 承载。",
+            "rank_score": 0.016129,
+            "match_sources": [
+              "keyword"
+            ],
+            "modified_at": "2025-01-03T00:00:00Z",
+            "frontmatter": {
+              "status": "accepted",
+              "tags": [
+                "decisions",
+                "architecture",
+                "index"
+              ],
+              "title": "索引策略决策",
+              "type": "decision"
+            },
+            "related": []
+          }
+        ],
+        "truncated": false,
+        "matched": true
+      },
+      "error": null
+    },
+    {
+      "query_id": "zh-trouble-rebuild",
+      "category": "keyword",
+      "difficulty": "medium",
+      "latency_ms": 1.8199579935753718,
+      "strategy": "keyword",
+      "degraded": [
+        "semantic_unavailable"
+      ],
+      "result_paths": [
+        "operations/troubleshooting.md",
+        "decisions/index-strategy.md",
+        "guides/deploy-runbook.md",
+        "decisions/index-strategy.md",
+        "guides/deploy-runbook.md",
+        "guides/onboarding.md"
+      ],
+      "result_sections": [
+        "故障排查 / 检索结果异常",
+        "索引策略 / 为什么索引可重建",
+        "发布手册 / 发布准备",
+        "索引策略 / 相关文档",
+        "发布手册 / 回滚流程",
+        "上手指南 / 上手步骤"
+      ],
+      "grades": [
+        2,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "context_result": {
+        "query": "索引 重建",
+        "scope": "",
+        "strategy": "keyword",
+        "degraded": [
+          "semantic_unavailable"
+        ],
+        "results": [
+          {
+            "path": "operations/troubleshooting.md",
+            "title": "故障排查",
+            "section": "故障排查 / 检索结果异常",
+            "snippet": "检索结果异常包括：返回了明显无关的文档、正确文档排在很后面、以及索引重建之后结果 突然变化。 索引重建会清空并重新生成全部派生投影，因此重建之后第一次查询会重新做一次增量确认。 如果重建结果是正确的，但查询仍然返回旧内容，说明进程里还有旧的运行时对象没有释放。 排序异常要区分两种成因：候选池里根本没有正确文档（召回问题），或者正确文档在候选池里 但融合排名偏低（排序问题）。这两种成因的修复方式完全不同，必须先分清。",
+            "rank_score": 0.016393,
+            "match_sources": [
+              "keyword"
+            ],
+            "modified_at": "2025-01-02T00:00:00Z",
+            "frontmatter": {
+              "tags": [
+                "operations",
+                "troubleshooting"
+              ],
+              "title": "故障排查",
+              "type": "note"
+            },
+            "related": []
+          },
+          {
+            "path": "decisions/index-strategy.md",
+            "title": "索引策略决策",
+            "section": "索引策略 / 为什么索引可重建",
+            "snippet": "索引是可删除的派生投影，而不是事实源。Markdown 文件是文档的事实边界，SQLite 只是它的 一份物化视图：任何一条索引记录都能从对应 Markdown 重新算出来，因此重建索引永远比迁移 索引更符合本项目的数据模型。 这条决策的直接后果是：schema 变更不需要写逐列迁移。版本不匹配时删掉旧库、重新扫描、 重新切块、重新生成向量即可。代价是大库升级后有一次性重建开销，所以重建过程必须有可见 进度和中断标记。 如果将来引入任何不可从 Markdown 重新生成的状态，这条决策立即失效。目前没有这样的状态。",
+            "rank_score": 0.016129,
+            "match_sources": [
+              "keyword"
+            ],
+            "modified_at": "2025-01-03T00:00:00Z",
+            "frontmatter": {
+              "status": "accepted",
+              "tags": [
+                "decisions",
+                "architecture",
+                "index"
+              ],
+              "title": "索引策略决策",
+              "type": "decision"
+            },
+            "related": []
+          },
+          {
+            "path": "guides/deploy-runbook.md",
+            "title": "发布手册",
+            "section": "发布手册 / 发布准备",
+            "snippet": "确认待发布提交已经通过完整检查：lint、类型检查和全部测试。确认索引 schema 版本没有 变化；如果有变化，先评估首次启动的重建耗时，再决定发布窗口。",
+            "rank_score": 0.015873,
+            "match_sources": [
+              "keyword"
+            ],
+            "modified_at": "2025-01-04T00:00:00Z",
+            "frontmatter": {
+              "tags": [
+                "guides",
+                "operations"
+              ],
+              "title": "发布手册",
+              "type": "guide"
+            },
+            "related": []
+          },
+          {
+            "path": "decisions/index-strategy.md",
+            "title": "索引策略决策",
+            "section": "索引策略 / 相关文档",
+            "snippet": "- 配置项含义见 `reference/configuration.md`，特别是 `embedding_model` 与 `similarity_threshold` 的联动关系。 - 故障处置见 `operations/troubleshooting.md`，其中「召回率过低」一节解释了候选池与 去重的行为。 - 索引重建的进度与恢复标记由 `wiki_index_meta` 承载。",
+            "rank_score": 0.015625,
+            "match_sources": [
+              "keyword"
+            ],
+            "modified_at": "2025-01-03T00:00:00Z",
+            "frontmatter": {
+              "status": "accepted",
+              "tags": [
+                "decisions",
+                "architecture",
+                "index"
+              ],
+              "title": "索引策略决策",
+              "type": "decision"
+            },
+            "related": []
+          },
+          {
+            "path": "guides/deploy-runbook.md",
+            "title": "发布手册",
+            "section": "发布手册 / 回滚流程",
+            "snippet": "回滚的触发条件是「发布后出现用户可见的检索错误，且无法在 15 分钟内定位」。触发后不 再做现场调试，直接回滚。 回滚流程共三步：第一步把服务切回上一个稳定版本；第二步确认派生索引与代码版本匹配， 不匹配时重建索引；第三步在新的稳定版本上复现原问题并记录。 回滚完成后必须补一条记录，说明触发原因、影响范围和后续动作。没有记录的回滚视为流程 未完成。",
+            "rank_score": 0.015385,
+            "match_sources": [
+              "keyword"
+            ],
+            "modified_at": "2025-01-04T00:00:00Z",
+            "frontmatter": {
+              "tags": [
+                "guides",
+                "operations"
+              ],
+              "title": "发布手册",
+              "type": "guide"
+            },
+            "related": []
+          },
+          {
+            "path": "guides/onboarding.md",
+            "title": "上手指南",
+            "section": "上手指南 / 上手步骤",
+            "snippet": "第一步：安装依赖并同步环境，确认命令行入口可以正常运行。 第二步：在 Wiki 根目录执行一次索引重建，建立本地派生索引。这一步决定后续所有检索是否 可用，不要在索引未建好之前就开始查问题。 第三步：用两三个你熟悉的关键词试一次检索，确认返回的片段确实来自你预期的那几篇文档。 如果返回明显不对，先看看是不是查询写成了整句自然语言——关键词检索要求查询词与文档措辞 一致。 第四步：读一遍根目录的规则文件，了解各目录的用途和 Frontmatter 必填字段。新建文档前 先取一次规则，避免写出不符合目录约束的文件。",
+            "rank_score": 0.015152,
+            "match_sources": [
+              "keyword"
+            ],
+            "modified_at": "2025-01-05T00:00:00Z",
+            "frontmatter": {
+              "tags": [
+                "guides",
+                "onboarding"
+              ],
+              "title": "上手指南",
+              "type": "guide"
+            },
+            "related": []
+          }
+        ],
+        "truncated": false,
+        "matched": true
+      },
+      "error": null
+    },
+    {
+      "query_id": "zh-decision-rebuildable",
+      "category": "keyword",
+      "difficulty": "medium",
+      "latency_ms": 2.370916001382284,
+      "strategy": "keyword",
+      "degraded": [
+        "semantic_unavailable"
+      ],
+      "result_paths": [
+        "operations/troubleshooting.md",
+        "decisions/index-strategy.md"
+      ],
+      "result_sections": [
+        "故障排查 / 检索结果异常",
+        "索引策略 / 为什么索引可重建"
+      ],
+      "grades": [
+        0,
+        3
+      ],
+      "context_result": {
+        "query": "索引 派生投影 重建",
+        "scope": "",
+        "strategy": "keyword",
+        "degraded": [
+          "semantic_unavailable"
+        ],
+        "results": [
+          {
+            "path": "operations/troubleshooting.md",
+            "title": "故障排查",
+            "section": "故障排查 / 检索结果异常",
+            "snippet": "检索结果异常包括：返回了明显无关的文档、正确文档排在很后面、以及索引重建之后结果 突然变化。 索引重建会清空并重新生成全部派生投影，因此重建之后第一次查询会重新做一次增量确认。 如果重建结果是正确的，但查询仍然返回旧内容，说明进程里还有旧的运行时对象没有释放。 排序异常要区分两种成因：候选池里根本没有正确文档（召回问题），或者正确文档在候选池里 但融合排名偏低（排序问题）。这两种成因的修复方式完全不同，必须先分清。",
+            "rank_score": 0.016393,
+            "match_sources": [
+              "keyword"
+            ],
+            "modified_at": "2025-01-02T00:00:00Z",
+            "frontmatter": {
+              "tags": [
+                "operations",
+                "troubleshooting"
+              ],
+              "title": "故障排查",
+              "type": "note"
+            },
+            "related": []
+          },
+          {
+            "path": "decisions/index-strategy.md",
+            "title": "索引策略决策",
+            "section": "索引策略 / 为什么索引可重建",
+            "snippet": "索引是可删除的派生投影，而不是事实源。Markdown 文件是文档的事实边界，SQLite 只是它的 一份物化视图：任何一条索引记录都能从对应 Markdown 重新算出来，因此重建索引永远比迁移 索引更符合本项目的数据模型。 这条决策的直接后果是：schema 变更不需要写逐列迁移。版本不匹配时删掉旧库、重新扫描、 重新切块、重新生成向量即可。代价是大库升级后有一次性重建开销，所以重建过程必须有可见 进度和中断标记。 如果将来引入任何不可从 Markdown 重新生成的状态，这条决策立即失效。目前没有这样的状态。",
+            "rank_score": 0.016129,
+            "match_sources": [
+              "keyword"
+            ],
+            "modified_at": "2025-01-03T00:00:00Z",
+            "frontmatter": {
+              "status": "accepted",
+              "tags": [
+                "decisions",
+                "architecture",
+                "index"
+              ],
+              "title": "索引策略决策",
+              "type": "decision"
+            },
+            "related": []
+          }
+        ],
+        "truncated": false,
+        "matched": true
+      },
+      "error": null
+    },
+    {
+      "query_id": "zh-decision-optional",
+      "category": "keyword",
+      "difficulty": "hard",
+      "latency_ms": 2.3274160048458725,
+      "strategy": "keyword",
+      "degraded": [
+        "semantic_unavailable"
+      ],
+      "result_paths": [
+        "decisions/index-strategy.md"
+      ],
+      "result_sections": [
+        "索引策略 / 语义检索是可选依赖"
+      ],
+      "grades": [
+        3
+      ],
+      "context_result": {
+        "query": "语义检索 可选依赖",
+        "scope": "",
+        "strategy": "keyword",
+        "degraded": [
+          "semantic_unavailable"
+        ],
+        "results": [
+          {
+            "path": "decisions/index-strategy.md",
+            "title": "索引策略决策",
+            "section": "索引策略 / 语义检索是可选依赖",
+            "snippet": "语义检索是可选依赖，不是必需路径。embedding 模型体积大、首次加载慢、在某些平台上还会 因为原生库问题直接不可用，所以它必须能够整体缺席。 缺席时的行为是显式降级：`get_wiki_context` 在结果里标记 `semantic_unavailable`，同时 关键词检索仍然返回完整结果。调用方据此判断「这次结果没有语义参与」，而不是把降级当成 空结果处理。 把语义检索做成可选依赖，也意味着它不能承担唯一召回职责。关键词那一路必须独立可用， 否则一旦模型加载失败，整个检索就退化成不可用。",
+            "rank_score": 0.016393,
+            "match_sources": [
+              "keyword"
+            ],
+            "modified_at": "2025-01-03T00:00:00Z",
+            "frontmatter": {
+              "status": "accepted",
+              "tags": [
+                "decisions",
+                "architecture",
+                "index"
+              ],
+              "title": "索引策略决策",
+              "type": "decision"
+            },
+            "related": []
+          }
+        ],
+        "truncated": false,
+        "matched": true
+      },
+      "error": null
+    },
+    {
+      "query_id": "zh-cross-document",
+      "category": "cross_document",
+      "difficulty": "medium",
+      "latency_ms": 1.9323749947943725,
+      "strategy": "keyword",
+      "degraded": [
+        "semantic_unavailable"
+      ],
+      "result_paths": [
+        "decisions/index-strategy.md"
+      ],
+      "result_sections": [
+        "索引策略 / 相关文档"
+      ],
+      "grades": [
+        3
+      ],
+      "context_result": {
+        "query": "索引策略 相关文档",
+        "scope": "",
+        "strategy": "keyword",
+        "degraded": [
+          "semantic_unavailable"
+        ],
+        "results": [
+          {
+            "path": "decisions/index-strategy.md",
+            "title": "索引策略决策",
+            "section": "索引策略 / 相关文档",
+            "snippet": "- 配置项含义见 `reference/configuration.md`，特别是 `embedding_model` 与 `similarity_threshold` 的联动关系。 - 故障处置见 `operations/troubleshooting.md`，其中「召回率过低」一节解释了候选池与 去重的行为。 - 索引重建的进度与恢复标记由 `wiki_index_meta` 承载。",
+            "rank_score": 0.016393,
+            "match_sources": [
+              "keyword"
+            ],
+            "modified_at": "2025-01-03T00:00:00Z",
+            "frontmatter": {
+              "status": "accepted",
+              "tags": [
+                "decisions",
+                "architecture",
+                "index"
+              ],
+              "title": "索引策略决策",
+              "type": "decision"
+            },
+            "related": []
+          }
+        ],
+        "truncated": false,
+        "matched": true
+      },
+      "error": null
+    },
+    {
+      "query_id": "zh-tag-filter-rollback",
+      "category": "filter",
+      "difficulty": "medium",
+      "latency_ms": 2.434665999317076,
+      "strategy": "keyword",
+      "degraded": [
+        "semantic_unavailable"
+      ],
+      "result_paths": [
+        "guides/deploy-runbook.md"
+      ],
+      "result_sections": [
+        "发布手册 / 回滚流程"
+      ],
+      "grades": [
+        3
+      ],
+      "context_result": {
+        "query": "回滚",
+        "scope": "",
+        "strategy": "keyword",
+        "degraded": [
+          "semantic_unavailable"
+        ],
+        "results": [
+          {
+            "path": "guides/deploy-runbook.md",
+            "title": "发布手册",
+            "section": "发布手册 / 回滚流程",
+            "snippet": "回滚的触发条件是「发布后出现用户可见的检索错误，且无法在 15 分钟内定位」。触发后不 再做现场调试，直接回滚。 回滚流程共三步：第一步把服务切回上一个稳定版本；第二步确认派生索引与代码版本匹配， 不匹配时重建索引；第三步在新的稳定版本上复现原问题并记录。 回滚完成后必须补一条记录，说明触发原因、影响范围和后续动作。没有记录的回滚视为流程 未完成。",
+            "rank_score": 0.016393,
+            "match_sources": [
+              "keyword"
+            ],
+            "modified_at": "2025-01-04T00:00:00Z",
+            "frontmatter": {
+              "tags": [
+                "guides",
+                "operations"
+              ],
+              "title": "发布手册",
+              "type": "guide"
+            },
+            "related": []
+          }
+        ],
+        "truncated": false,
+        "matched": true
+      },
+      "error": null
+    },
+    {
+      "query_id": "zh-scope-filter",
+      "category": "filter",
+      "difficulty": "easy",
+      "latency_ms": 2.0524580031633377,
+      "strategy": "recent",
+      "degraded": [],
+      "result_paths": [
+        "guides/onboarding.md",
+        "guides/deploy-runbook.md"
+      ],
+      "result_sections": [
+        "上手指南",
+        "发布手册"
+      ],
+      "grades": [
+        0,
+        0
+      ],
+      "context_result": {
+        "query": "",
+        "scope": "guides",
+        "strategy": "recent",
+        "degraded": [],
+        "results": [
+          {
+            "path": "guides/onboarding.md",
+            "title": "上手指南",
+            "section": "上手指南",
+            "snippet": "新成员第一天完成下面几步，就能独立使用这套本地文档层。",
+            "rank_score": 0.0,
+            "match_sources": [
+              "recency"
+            ],
+            "modified_at": "2025-01-05T00:00:00Z",
+            "frontmatter": {
+              "tags": [
+                "guides",
+                "onboarding"
+              ],
+              "title": "上手指南",
+              "type": "guide"
+            },
+            "related": []
+          },
+          {
+            "path": "guides/deploy-runbook.md",
+            "title": "发布手册",
+            "section": "发布手册",
+            "snippet": "发布按「准备、发布、观察」三段推进，每一步都有明确的进入条件和退出条件。",
+            "rank_score": 0.0,
+            "match_sources": [
+              "recency"
+            ],
+            "modified_at": "2025-01-04T00:00:00Z",
+            "frontmatter": {
+              "tags": [
+                "guides",
+                "operations"
+              ],
+              "title": "发布手册",
+              "type": "guide"
+            },
+            "related": []
+          }
+        ],
+        "truncated": false,
+        "matched": true
+      },
+      "error": null
+    },
+    {
+      "query_id": "zh-recent-empty-query",
+      "category": "recent",
+      "difficulty": "easy",
+      "latency_ms": 1.9807080025202595,
+      "strategy": "recent",
+      "degraded": [],
+      "result_paths": [
+        "guides/onboarding.md",
+        "guides/deploy-runbook.md",
+        "decisions/index-strategy.md",
+        "operations/troubleshooting.md",
+        "reference/configuration.md"
+      ],
+      "result_sections": [
+        "上手指南",
+        "发布手册",
+        "索引策略",
+        "故障排查",
+        "配置说明"
+      ],
+      "grades": [
+        2,
+        2,
+        0,
+        0,
+        0
+      ],
+      "context_result": {
+        "query": "",
+        "scope": "",
+        "strategy": "recent",
+        "degraded": [],
+        "results": [
+          {
+            "path": "guides/onboarding.md",
+            "title": "上手指南",
+            "section": "上手指南",
+            "snippet": "新成员第一天完成下面几步，就能独立使用这套本地文档层。",
+            "rank_score": 0.0,
+            "match_sources": [
+              "recency"
+            ],
+            "modified_at": "2025-01-05T00:00:00Z",
+            "frontmatter": {
+              "tags": [
+                "guides",
+                "onboarding"
+              ],
+              "title": "上手指南",
+              "type": "guide"
+            },
+            "related": []
+          },
+          {
+            "path": "guides/deploy-runbook.md",
+            "title": "发布手册",
+            "section": "发布手册",
+            "snippet": "发布按「准备、发布、观察」三段推进，每一步都有明确的进入条件和退出条件。",
+            "rank_score": 0.0,
+            "match_sources": [
+              "recency"
+            ],
+            "modified_at": "2025-01-04T00:00:00Z",
+            "frontmatter": {
+              "tags": [
+                "guides",
+                "operations"
+              ],
+              "title": "发布手册",
+              "type": "guide"
+            },
+            "related": []
+          },
+          {
+            "path": "decisions/index-strategy.md",
+            "title": "索引策略决策",
+            "section": "索引策略",
+            "snippet": "本页记录索引相关的已确认决策。结论优先，理由其次，反例和边界条件放在最后。",
+            "rank_score": 0.0,
+            "match_sources": [
+              "recency"
+            ],
+            "modified_at": "2025-01-03T00:00:00Z",
+            "frontmatter": {
+              "status": "accepted",
+              "tags": [
+                "decisions",
+                "architecture",
+                "index"
+              ],
+              "title": "索引策略决策",
+              "type": "decision"
+            },
+            "related": []
+          },
+          {
+            "path": "operations/troubleshooting.md",
+            "title": "故障排查",
+            "section": "故障排查",
+            "snippet": "下面记录已经真实发生过的检索故障、判断依据和处置方式。排查顺序按「先确认索引状态， 再确认查询形态」推进。",
+            "rank_score": 0.0,
+            "match_sources": [
+              "recency"
+            ],
+            "modified_at": "2025-01-02T00:00:00Z",
+            "frontmatter": {
+              "tags": [
+                "operations",
+                "troubleshooting"
+              ],
+              "title": "故障排查",
+              "type": "note"
+            },
+            "related": []
+          },
+          {
+            "path": "reference/configuration.md",
+            "title": "配置参考",
+            "section": "配置说明",
+            "snippet": "AgentWiki 的全部运行参数集中在一个 JSON 文件里。配置不使用环境变量，也不支持命令行 覆盖，避免同一台机器上出现「实际生效值」和「文件里写的值」不一致。",
+            "rank_score": 0.0,
+            "match_sources": [
+              "recency"
+            ],
+            "modified_at": "2025-01-01T00:00:00Z",
+            "frontmatter": {
+              "tags": [
+                "reference",
+                "configuration"
+              ],
+              "title": "配置参考",
+              "type": "reference"
+            },
+            "related": []
+          }
+        ],
+        "truncated": false,
+        "matched": true
+      },
+      "error": null
+    },
+    {
+      "query_id": "zh-long-document",
+      "category": "long_document",
+      "difficulty": "medium",
+      "latency_ms": 1.9705000013345852,
+      "strategy": "keyword",
+      "degraded": [
+        "semantic_unavailable"
+      ],
+      "result_paths": [
+        "decisions/index-strategy.md"
+      ],
+      "result_sections": [
+        "索引策略 / 为什么索引可重建"
+      ],
+      "grades": [
+        3
+      ],
+      "context_result": {
+        "query": "为什么索引可重建",
+        "scope": "",
+        "strategy": "keyword",
+        "degraded": [
+          "semantic_unavailable"
+        ],
+        "results": [
+          {
+            "path": "decisions/index-strategy.md",
+            "title": "索引策略决策",
+            "section": "索引策略 / 为什么索引可重建",
+            "snippet": "索引是可删除的派生投影，而不是事实源。Markdown 文件是文档的事实边界，SQLite 只是它的 一份物化视图：任何一条索引记录都能从对应 Markdown 重新算出来，因此重建索引永远比迁移 索引更符合本项目的数据模型。 这条决策的直接后果是：schema 变更不需要写逐列迁移。版本不匹配时删掉旧库、重新扫描、 重新切块、重新生成向量即可。代价是大库升级后有一次性重建开销，所以重建过程必须有可见 进度和中断标记。 如果将来引入任何不可从 Markdown 重新生成的状态，这条决策立即失效。目前没有这样的状态。",
+            "rank_score": 0.016393,
+            "match_sources": [
+              "keyword"
+            ],
+            "modified_at": "2025-01-03T00:00:00Z",
+            "frontmatter": {
+              "status": "accepted",
+              "tags": [
+                "decisions",
+                "architecture",
+                "index"
+              ],
+              "title": "索引策略决策",
+              "type": "decision"
+            },
+            "related": []
+          }
+        ],
+        "truncated": false,
+        "matched": true
+      },
+      "error": null
+    },
+    {
+      "query_id": "zh-no-answer",
+      "category": "no_answer",
+      "difficulty": "medium",
+      "latency_ms": 1.7526250012451783,
+      "strategy": "keyword",
+      "degraded": [
+        "semantic_unavailable",
+        "no_content_match"
+      ],
+      "result_paths": [],
+      "result_sections": [],
+      "grades": [],
+      "context_result": {
+        "query": "Kubernetes etcd 备份",
+        "scope": "",
+        "strategy": "keyword",
+        "degraded": [
+          "semantic_unavailable",
+          "no_content_match"
+        ],
+        "results": [],
+        "truncated": false,
+        "matched": false
+      },
+      "error": null
+    }
+  ]
+}

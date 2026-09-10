@@ -1,0 +1,360 @@
+{
+  "run_id": "20260910T171219Z",
+  "corpus": "/Users/zhuxining/Code/AgentWiki/benchmarks/corpora/zh-team-wiki",
+  "corpus_version": "c70f6b33905854d823ce96aa7b64fcb0fcb407f2ed3a0bc83a87e06606999ee2",
+  "git_revision": "ac4ad43b5b0ba6e312fee539d1286019de835d2d",
+  "mode": "keyword",
+  "k": 5,
+  "judgments": 17,
+  "layer_counts": {
+    "retrieved": 12,
+    "ranked_below_k": 0,
+    "granularity_only": 2,
+    "wrong_section": 3,
+    "not_recalled": 0,
+    "chunk_missing": 0,
+    "not_indexed": 0,
+    "qrels_stale": 0
+  },
+  "index_ceiling_rate": 1.0,
+  "document_recall_rate": 1.0,
+  "retrieved_rate": 0.7058823529411765,
+  "granularity_loss_rate": 0.11764705882352941,
+  "no_answer_contamination": {},
+  "queries": [
+    {
+      "query_id": "zh-config-file-location",
+      "category": "keyword",
+      "strategy": "keyword",
+      "degraded": [
+        "semantic_unavailable"
+      ],
+      "judgments": [
+        {
+          "query_id": "zh-config-file-location",
+          "path": "reference/configuration.md",
+          "section": "配置说明 / 配置文件位置",
+          "grade": 3,
+          "layer": "retrieved",
+          "rank": 1,
+          "match_sources": [
+            "keyword"
+          ]
+        }
+      ]
+    },
+    {
+      "query_id": "zh-config-fields",
+      "category": "keyword",
+      "strategy": "keyword",
+      "degraded": [
+        "semantic_unavailable"
+      ],
+      "judgments": [
+        {
+          "query_id": "zh-config-fields",
+          "path": "reference/configuration.md",
+          "section": "配置说明 / 配置字段",
+          "grade": 3,
+          "layer": "granularity_only",
+          "rank": 1,
+          "match_sources": [
+            "keyword"
+          ]
+        }
+      ]
+    },
+    {
+      "query_id": "zh-config-embedding-model",
+      "category": "keyword",
+      "strategy": "keyword",
+      "degraded": [
+        "semantic_unavailable"
+      ],
+      "judgments": [
+        {
+          "query_id": "zh-config-embedding-model",
+          "path": "reference/configuration.md",
+          "section": "配置说明 / 配置字段",
+          "grade": 3,
+          "layer": "granularity_only",
+          "rank": 1,
+          "match_sources": [
+            "keyword"
+          ]
+        }
+      ]
+    },
+    {
+      "query_id": "zh-config-changelog",
+      "category": "recent",
+      "strategy": "recent_hybrid",
+      "degraded": [
+        "semantic_unavailable"
+      ],
+      "judgments": [
+        {
+          "query_id": "zh-config-changelog",
+          "path": "reference/configuration.md",
+          "section": "",
+          "grade": 3,
+          "layer": "retrieved",
+          "rank": 1,
+          "match_sources": [
+            "keyword",
+            "recency"
+          ]
+        }
+      ]
+    },
+    {
+      "query_id": "zh-trouble-tokenizer",
+      "category": "keyword",
+      "strategy": "keyword",
+      "degraded": [
+        "semantic_unavailable"
+      ],
+      "judgments": [
+        {
+          "query_id": "zh-trouble-tokenizer",
+          "path": "operations/troubleshooting.md",
+          "section": "故障排查 / 中文检索无结果",
+          "grade": 3,
+          "layer": "retrieved",
+          "rank": 1,
+          "match_sources": [
+            "keyword"
+          ]
+        }
+      ]
+    },
+    {
+      "query_id": "zh-trouble-recall",
+      "category": "keyword",
+      "strategy": "keyword",
+      "degraded": [
+        "semantic_unavailable"
+      ],
+      "judgments": [
+        {
+          "query_id": "zh-trouble-recall",
+          "path": "operations/troubleshooting.md",
+          "section": "故障排查 / 召回率过低",
+          "grade": 3,
+          "layer": "retrieved",
+          "rank": 1,
+          "match_sources": [
+            "keyword"
+          ]
+        }
+      ]
+    },
+    {
+      "query_id": "zh-trouble-rebuild",
+      "category": "keyword",
+      "strategy": "keyword",
+      "degraded": [
+        "semantic_unavailable"
+      ],
+      "judgments": [
+        {
+          "query_id": "zh-trouble-rebuild",
+          "path": "operations/troubleshooting.md",
+          "section": "故障排查 / 检索结果异常",
+          "grade": 2,
+          "layer": "retrieved",
+          "rank": 1,
+          "match_sources": [
+            "keyword"
+          ]
+        }
+      ]
+    },
+    {
+      "query_id": "zh-decision-rebuildable",
+      "category": "keyword",
+      "strategy": "keyword",
+      "degraded": [
+        "semantic_unavailable"
+      ],
+      "judgments": [
+        {
+          "query_id": "zh-decision-rebuildable",
+          "path": "decisions/index-strategy.md",
+          "section": "索引策略 / 为什么索引可重建",
+          "grade": 3,
+          "layer": "retrieved",
+          "rank": 2,
+          "match_sources": [
+            "keyword"
+          ]
+        }
+      ]
+    },
+    {
+      "query_id": "zh-decision-optional",
+      "category": "keyword",
+      "strategy": "keyword",
+      "degraded": [
+        "semantic_unavailable"
+      ],
+      "judgments": [
+        {
+          "query_id": "zh-decision-optional",
+          "path": "decisions/index-strategy.md",
+          "section": "索引策略 / 语义检索是可选依赖",
+          "grade": 3,
+          "layer": "retrieved",
+          "rank": 1,
+          "match_sources": [
+            "keyword"
+          ]
+        }
+      ]
+    },
+    {
+      "query_id": "zh-cross-document",
+      "category": "cross_document",
+      "strategy": "keyword",
+      "degraded": [
+        "semantic_unavailable"
+      ],
+      "judgments": [
+        {
+          "query_id": "zh-cross-document",
+          "path": "decisions/index-strategy.md",
+          "section": "索引策略 / 相关文档",
+          "grade": 3,
+          "layer": "retrieved",
+          "rank": 1,
+          "match_sources": [
+            "keyword"
+          ]
+        },
+        {
+          "query_id": "zh-cross-document",
+          "path": "decisions/index-strategy.md",
+          "section": "索引策略 / 语义检索是可选依赖",
+          "grade": 2,
+          "layer": "wrong_section",
+          "rank": 1,
+          "match_sources": [
+            "keyword"
+          ]
+        }
+      ]
+    },
+    {
+      "query_id": "zh-tag-filter-rollback",
+      "category": "filter",
+      "strategy": "keyword",
+      "degraded": [
+        "semantic_unavailable"
+      ],
+      "judgments": [
+        {
+          "query_id": "zh-tag-filter-rollback",
+          "path": "guides/deploy-runbook.md",
+          "section": "发布手册 / 回滚流程",
+          "grade": 3,
+          "layer": "retrieved",
+          "rank": 1,
+          "match_sources": [
+            "keyword"
+          ]
+        }
+      ]
+    },
+    {
+      "query_id": "zh-scope-filter",
+      "category": "filter",
+      "strategy": "recent",
+      "degraded": [],
+      "judgments": [
+        {
+          "query_id": "zh-scope-filter",
+          "path": "guides/onboarding.md",
+          "section": "上手指南 / 上手步骤",
+          "grade": 3,
+          "layer": "wrong_section",
+          "rank": 1,
+          "match_sources": [
+            "recency"
+          ]
+        },
+        {
+          "query_id": "zh-scope-filter",
+          "path": "guides/deploy-runbook.md",
+          "section": "发布手册 / 回滚流程",
+          "grade": 2,
+          "layer": "wrong_section",
+          "rank": 2,
+          "match_sources": [
+            "recency"
+          ]
+        }
+      ]
+    },
+    {
+      "query_id": "zh-recent-empty-query",
+      "category": "recent",
+      "strategy": "recent",
+      "degraded": [],
+      "judgments": [
+        {
+          "query_id": "zh-recent-empty-query",
+          "path": "guides/deploy-runbook.md",
+          "section": "",
+          "grade": 2,
+          "layer": "retrieved",
+          "rank": 2,
+          "match_sources": [
+            "recency"
+          ]
+        },
+        {
+          "query_id": "zh-recent-empty-query",
+          "path": "guides/onboarding.md",
+          "section": "",
+          "grade": 2,
+          "layer": "retrieved",
+          "rank": 1,
+          "match_sources": [
+            "recency"
+          ]
+        }
+      ]
+    },
+    {
+      "query_id": "zh-long-document",
+      "category": "long_document",
+      "strategy": "keyword",
+      "degraded": [
+        "semantic_unavailable"
+      ],
+      "judgments": [
+        {
+          "query_id": "zh-long-document",
+          "path": "decisions/index-strategy.md",
+          "section": "索引策略 / 为什么索引可重建",
+          "grade": 3,
+          "layer": "retrieved",
+          "rank": 1,
+          "match_sources": [
+            "keyword"
+          ]
+        }
+      ]
+    },
+    {
+      "query_id": "zh-no-answer",
+      "category": "no_answer",
+      "strategy": "keyword",
+      "degraded": [
+        "semantic_unavailable",
+        "no_content_match"
+      ],
+      "judgments": []
+    }
+  ]
+}
