@@ -6,7 +6,9 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
-DEFAULT_CONFIG_PATH = Path(".agentwiki/config.json")
+DEFAULT_CONFIG_PATH = Path("~/.agentwiki/config.json")
+DEFAULT_INDEX_PATH = Path("~/.agentwiki/agentwiki.sqlite3")
+DEFAULT_DOCUMENT_ROOT = Path("~/AgentWiki")
 
 
 class Settings(BaseModel):
@@ -14,14 +16,14 @@ class Settings(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    document_root: Path = Path("documents")
-    index_path: Path = Path(".agentwiki/index.sqlite3")
+    document_root: Path = DEFAULT_DOCUMENT_ROOT
+    index_path: Path | None = None
     embedding_model: str | None = None
 
     @field_validator("document_root", "index_path", mode="before")
     @classmethod
-    def normalize_path(cls, value: str | Path) -> Path:
-        return Path(value).expanduser()
+    def normalize_path(cls, value: str | Path | None) -> Path | None:
+        return Path(value).expanduser() if value is not None else None
 
     @classmethod
     def load(cls, config_path: Path = DEFAULT_CONFIG_PATH) -> Settings:
@@ -38,15 +40,30 @@ class Settings(BaseModel):
             settings = cls.model_validate(raw)
         else:
             settings = cls()
+            resolved_config.parent.mkdir(parents=True, exist_ok=True)
+            resolved_config.write_text(
+                json.dumps(
+                    {
+                        "document_root": str(DEFAULT_DOCUMENT_ROOT),
+                        "embedding_model": None,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+        document_root = cls._resolve_project_path(settings.document_root, project_root)
+        index_path = (
+            DEFAULT_INDEX_PATH.expanduser().resolve()
+            if settings.index_path is None
+            else cls._resolve_project_path(settings.index_path, project_root)
+        )
         return settings.model_copy(
-            update={
-                "document_root": cls._resolve_project_path(
-                    settings.document_root, project_root
-                ),
-                "index_path": cls._resolve_project_path(settings.index_path, project_root),
-            }
+            update={"document_root": document_root, "index_path": index_path}
         )
 
     @staticmethod
     def _resolve_project_path(path: Path, project_root: Path) -> Path:
-        return path.resolve() if path.is_absolute() else (project_root / path).resolve()
+        expanded = path.expanduser()
+        return expanded.resolve() if expanded.is_absolute() else (project_root / expanded).resolve()

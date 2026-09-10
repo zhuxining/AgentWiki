@@ -1,0 +1,42 @@
+version: 1
+name: AgentWiki 示例知识库
+purpose: 为 Agent 提供可检索的团队知识、操作指南和技术决策
+
+default_type: note
+required_fields:
+  - owner
+
+tag_aliases:
+  guide:
+    - guides
+  decision:
+    - decisions
+  architecture:
+    - arch
+
+sections:
+  - path: decisions
+    description: 已确认的技术与产品决策
+    types:
+      - decision
+    required_fields:
+      - status
+      - decided_at
+    filename_pattern: "*.md"
+
+  - path: guides
+    description: 面向 Agent 和团队成员的操作指南
+    types:
+      - guide
+    required_fields:
+      - status
+    filename_pattern: "*.md"
+
+  - path: projects/*
+    description: 各项目自己的知识文档
+    types:
+      - project
+      - note
+    required_fields:
+      - project
+    filename_pattern: "*.md"
