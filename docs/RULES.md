@@ -14,6 +14,17 @@ AgentWiki 使用 Wiki 根目录下的 `AGENTWIKI.md` 作为规则和指引文件
 `AGENTWIKI.md` 不会作为普通文档参与索引。索引是可删除、可重建的派生数据，Markdown 文档
 仍然是知识库的事实源。
 
+这是唯一的规则入口。**启动时会自动初始化**：CLI 与 MCP 在装配运行时（`create_runtime`）会
+检查 Wiki 根目录，若缺少 `AGENTWIKI.md` 就写入随包分发的默认模板
+（`src/agentwiki/data/default/AGENTWIKI.md`）。已存在的文件**永远不会被覆盖**，手改内容在后续
+每次启动都保留。
+
+默认模板声明 `required_fields: [title, type, tags]` 与 `default_type: note`，`sections` 与
+`tag_aliases` 以注释形式给出示例。对已有 Wiki，首次升级后这些必填字段才会开始生效，因此
+可能一次性出现多条 `frontmatter.required` 问题；按需修改该文件即可调整约束。
+
+若确实不需要任何规则，把 `required_fields` 设为空列表；删除文件会在下次启动时重新生成。
+
 ## 完整示例
 
 ```markdown
@@ -127,3 +138,13 @@ sections:
 | `link.broken` | warning | 内部 Markdown 链接目标不存在 |
 | `markdown.formatting` | warning | 文档不符合 mdformat 规范 |
 | `markdown.parse` | error | Markdown 或 YAML Frontmatter 无法解析 |
+
+## 开发与验收命令
+
+所有门禁都收敛到 `Makefile`，CI 与本地执行同一批目标：
+
+```bash
+make check        # ruff + ty + pytest
+make test-unit    # 跳过标记为 integration 的测试
+make benchmark CORPUS=/path/to/wiki   # 中文检索基准
+```

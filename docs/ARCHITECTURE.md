@@ -14,8 +14,13 @@ Agent 原生工具负责已知路径读取、创建、编辑、移动和删除�
 
 ## 2. 数据与检索
 
-Markdown 正文和 YAML Frontmatter 是事实源。`agentwiki/context.yaml` 与
-`agentwiki/guide.md` 是保留治理文件，不进入普通索引。
+Markdown 正文和 YAML Frontmatter 是事实源。Wiki 根目录的 `AGENTWIKI.md` 是唯一的保留治理
+文件：Frontmatter 承载结构化规则，正文作为 `guide_content` 返回，该文件不进入普通索引。
+除此之外所有 `*.md` 都是普通文档。
+
+运行时装配（`create_runtime`）在启动时检查该文件：缺失则写入随包分发的默认模板
+（`agentwiki/data/default/AGENTWIKI.md`），已存在则永不覆盖。因此新建 Wiki 立刻拥有可用规则，
+而手写规则不会在任何一次启动中被回退。该初始化是启动期唯一的写操作，不参与索引事务。
 
 索引保存：
 
@@ -64,6 +69,21 @@ SHM 文件并创建新 schema，随后由增量同步从 Markdown 重新生成�
 语义依赖不可用时降级为关键词查询，并在结果中说明原因。带近期意图的主题查询额外加入
 新近度排名，普通查询不受时间偏置。
 
+关键词投影对"不以空格分词"的书写系统（Han、假名、谚文、注音、泰/老/藏/缅/高棉）建立
+三条索引列（`indexing/text.py`）：`search_chars` 存每个字，`search_bigrams` 存重叠二元组，
+`search_words` 存拉丁词元。原因是 SQLite FTS5 的 `unicode61` 会把一整段连续中文当作单个
+token，任何中文子串查询都无法命中。
+
+查询侧把每个书写段渲染成一条 FTS5 条件组：`search_chars` 的**有序短语**钉住字符与顺序，
+`search_bigrams` 的**有序短语**钉住段内相邻性，两列合取即等价于精确子串匹配——因此不需要
+在 Python 侧再对候选做一次复检（复检会让 `LIMIT` 先于校验生效，使真正的命中被挤出候选窗口）。
+段与拉丁词元之间用 AND 连接。
+
+任何单个检索源失败都只降低策略等级（`degraded` 记录原因），不会中止整次检索。
+
+候选查询在 SQL 层完成 scope 与 `type`/`tags` 过滤、按文档去重并施加 `LIMIT`：否则一篇章节
+很多的文档会占满整个候选池，使其他匹配文档无法进入融合阶段。
+
 ## 3. 模块与依赖
 
 ```text
@@ -87,7 +107,9 @@ CLI / MCP composition roots
 - `cli`、`mcp`：读取配置、协议适配和结果序列化。
 
 services 通过 Protocol 使用稳定边界，不直接创建 SQLite 或读取配置。composition root
-统一读取项目根目录的 `.agentwiki/config.json`；runtime factory 只接受已经解析的构造参数。
+统一读取用户配置目录的 `~/.agentwiki/config.json`（相对路径以该目录为基准，首次运行缺少
+文件时创建默认配置并初始化 Wiki 的 `AGENTWIKI.md`）；runtime factory 只接受已经解析的
+构造参数。
 
 ## 4. Agent 工作流
 
@@ -107,5 +129,7 @@ services 通过 Protocol 使用稳定边界，不直接创建 SQLite 或读取�
 - embedding 失败不会破坏关键词投影；
 - 路径和 scope 必须留在 Wiki 根目录；外部符号链接不进入索引；
 - 校验只报告问题，不自动改写原生工具产生的 Markdown；
-- Frontmatter 始终要求 `title`、`type`、`tags`、`created_at`、`updated_at`；规则可追加必填字段，并通过可选 `tag_aliases` 归一同义标签；动态 `known_tags` 用于复用提示，新标签仅告警、不阻断，其他字段允许扩展；
-- SQLite 连接由 async runtime 显式初始化并关闭。
+- 必填字段完全由规则文件 `AGENTWIKI.md` 的 `required_fields`（含匹配的 `sections[].required_fields`）决定，系统不内置任何必填字段；规则可用可选 `tag_aliases` 归一同义标签，动态 `known_tags` 用于复用提示，新标签仅告警、不阻断，其他字段允许扩展；
+- SQLite 连接由 async runtime 显式初始化并关闭；
+- 单文档索引失败（含 SQLite 约束错误）会被记录到 `sync_error` 并继续处理其余文档，不会中止整轮同步；
+- 同一连接上的写操作串行化在一把写锁之下：正确性依赖锁纪律，而不是驱动层的事务隔离。因此所有写路径必须持有该锁，读路径不与之并发交叉。
