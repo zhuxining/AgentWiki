@@ -155,7 +155,7 @@ class GovernanceService:
         if rules_text:
             parsed = yaml.safe_load(rules_text) or {}
             if not isinstance(parsed, dict):
-                raise ValueError("_agentwiki/context.yaml must be a YAML mapping")
+                raise ValueError("agentwiki/context.yaml must be a YAML mapping")
             data = parsed
         guide = self.library.reserved_text("guide.md")
         return WikiRules.model_validate({**data, "guide_content": guide})

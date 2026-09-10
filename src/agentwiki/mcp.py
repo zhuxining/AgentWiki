@@ -61,18 +61,6 @@ async def _runtime(ctx: Context) -> AsyncIterator[AgentWikiRuntime]:
         await runtime.close()
 
 
-@mcp.resource("agentwiki://rules", title="Wiki Rules", mime_type="application/json")
-async def wiki_rules_resource(ctx: Context) -> str:
-    async with _runtime(ctx) as runtime:
-        return runtime.governance.get_wiki_rules().model_dump_json()
-
-
-@mcp.resource("agentwiki://guide", title="Wiki Guide", mime_type="text/markdown")
-async def wiki_guide_resource(ctx: Context) -> str:
-    async with _runtime(ctx) as runtime:
-        return runtime.governance.get_wiki_rules().guide_content
-
-
 @mcp.tool(
     title="Get Wiki Context",
     description=(

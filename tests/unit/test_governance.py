@@ -7,7 +7,7 @@ from agentwiki.services.governance import GovernanceService
 
 def test_rules_and_validation_apply_to_native_documents(tmp_path) -> None:
     library = MarkdownLibrary(tmp_path / "documents")
-    reserved = library.root / "_agentwiki"
+    reserved = library.root / "agentwiki"
     reserved.mkdir()
     (reserved / "context.yaml").write_text(
         yaml.safe_dump(
@@ -61,7 +61,7 @@ def test_rules_reject_removed_or_renamed_fields(
     removed_rule: str,
 ) -> None:
     library = MarkdownLibrary(tmp_path / "documents")
-    reserved = library.root / "_agentwiki"
+    reserved = library.root / "agentwiki"
     reserved.mkdir()
     (reserved / "context.yaml").write_text(removed_rule, encoding="utf-8")
 
@@ -71,7 +71,7 @@ def test_rules_reject_removed_or_renamed_fields(
 
 def test_filename_pattern_returns_validation_error(tmp_path) -> None:
     library = MarkdownLibrary(tmp_path / "documents")
-    reserved = library.root / "_agentwiki"
+    reserved = library.root / "agentwiki"
     reserved.mkdir()
     (reserved / "context.yaml").write_text(
         "sections:\n  - path: decisions\n    filename_pattern: 'decision-*.md'\n",
@@ -88,7 +88,7 @@ def test_filename_pattern_returns_validation_error(tmp_path) -> None:
 
 def test_base_and_scoped_required_fields_are_additive(tmp_path) -> None:
     library = MarkdownLibrary(tmp_path / "documents")
-    reserved = library.root / "_agentwiki"
+    reserved = library.root / "agentwiki"
     reserved.mkdir()
     (reserved / "context.yaml").write_text(
         "required_fields: [owner]\n"
@@ -111,7 +111,7 @@ def test_base_and_scoped_required_fields_are_additive(tmp_path) -> None:
 
 def test_tag_aliases_warn_and_new_tags_remain_allowed(tmp_path) -> None:
     library = MarkdownLibrary(tmp_path / "documents")
-    reserved = library.root / "_agentwiki"
+    reserved = library.root / "agentwiki"
     reserved.mkdir()
     (reserved / "context.yaml").write_text(
         "tag_aliases:\n  architecture:\n    - Architecture\n    - arch\n",

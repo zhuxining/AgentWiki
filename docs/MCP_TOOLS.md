@@ -73,11 +73,6 @@ full: bool = false
 自行修复，不存在阻断配置，也不会改写文件；
 `markdown.formatting` 表示内容与项目 mdformat 规范不一致。仅完整验收时使用 `full=true`。
 
-## Resources
-
-- `agentwiki://rules`：根级机器规则 JSON；
-- `agentwiki://guide`：人类和 Agent 可读的 Wiki 指南。
-
 ## 自动指引
 
 MCP instructions 和工具描述会要求 Agent：

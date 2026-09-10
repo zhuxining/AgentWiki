@@ -7,6 +7,9 @@ import yaml
 from agentwiki.domain.documents import DocumentDescriptor, DocumentPath, Frontmatter, WikiDocument
 
 
+RESERVED_DIRECTORY = "agentwiki"
+
+
 class MarkdownLibrary:
     """Discover and parse Markdown below one configured root."""
 
@@ -27,7 +30,7 @@ class MarkdownLibrary:
         descriptors: list[DocumentDescriptor] = []
         for candidate in sorted(self.root.rglob("*.md")):
             relative = candidate.relative_to(self.root)
-            if "_agentwiki" in relative.parts:
+            if RESERVED_DIRECTORY in relative.parts:
                 continue
             try:
                 resolved = candidate.resolve(strict=True)
@@ -73,7 +76,7 @@ class MarkdownLibrary:
     def reserved_text(self, name: str) -> str:
         if name not in {"context.yaml", "guide.md"}:
             raise ValueError("unknown reserved Wiki file")
-        path = self.root / "_agentwiki" / name
+        path = self.root / RESERVED_DIRECTORY / name
         return path.read_text(encoding="utf-8") if path.is_file() else ""
 
     @staticmethod

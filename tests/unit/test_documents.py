@@ -13,7 +13,7 @@ def test_document_path_rejects_escape_and_non_markdown() -> None:
 def test_library_excludes_reserved_and_external_symlink(tmp_path) -> None:
     library = MarkdownLibrary(tmp_path / "documents")
     (library.root / "valid.md").write_text("valid\n", encoding="utf-8")
-    reserved = library.root / "_agentwiki"
+    reserved = library.root / "agentwiki"
     reserved.mkdir()
     (reserved / "guide.md").write_text("guide\n", encoding="utf-8")
     outside = tmp_path / "outside.md"

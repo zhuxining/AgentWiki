@@ -1,6 +1,6 @@
 # Wiki Rules 配置参考
 
-Wiki 规则使用文档库根目录下的 `_agentwiki/context.yaml`。它是 YAML 文件，只描述文档
+Wiki 规则使用文档库根目录下的 `agentwiki/context.yaml`。它是 YAML 文件，只描述文档
 组织和校验规则；运行路径与 embedding 模型仍由项目根目录的 `.agentwiki/config.json`
 配置。
 

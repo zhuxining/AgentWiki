@@ -25,7 +25,7 @@ def test_settings_loads_json_and_resolves_paths_from_project_root(tmp_path) -> N
     assert settings.embedding_model == "fake-model"
 
 
-def test_settings_defaults_to_user_agentwiki_directory(tmp_path) -> None:
+def test_settings_defaults_to_useragentwiki_directory(tmp_path) -> None:
     config_path = tmp_path / ".agentwiki" / "config.json"
     settings = Settings.load(config_path)
 

@@ -14,8 +14,8 @@ Agent 原生工具负责已知路径读取、创建、编辑、移动和删除�
 
 ## 2. 数据与检索
 
-Markdown 正文和 YAML Frontmatter 是事实源。`_agentwiki/context.yaml` 与
-`_agentwiki/guide.md` 是保留治理文件，不进入普通索引。
+Markdown 正文和 YAML Frontmatter 是事实源。`agentwiki/context.yaml` 与
+`agentwiki/guide.md` 是保留治理文件，不进入普通索引。
 
 索引保存：
 

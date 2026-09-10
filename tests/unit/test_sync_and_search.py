@@ -99,7 +99,7 @@ async def test_scope_and_metadata_filters_apply_before_candidate_limit(tmp_path)
 
 async def test_tag_filter_uses_aliases_and_includes_hierarchy_descendants(tmp_path) -> None:
     root = tmp_path / "documents"
-    reserved = root / "_agentwiki"
+    reserved = root / "agentwiki"
     reserved.mkdir(parents=True)
     (reserved / "context.yaml").write_text(
         "tag_aliases:\n  engineering:\n    - eng\n", encoding="utf-8"
