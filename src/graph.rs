@@ -6,6 +6,7 @@
 //! auto-extracted.
 
 use crate::model::{Edge, EdgeStatus, PathScope};
+use pulldown_cmark::{Event, LinkType, Options, Parser, Tag};
 
 /// Extract all edges declared in one document's frontmatter and body.
 ///
@@ -50,7 +51,26 @@ pub fn extract_edges(
         None => {}
     }
 
+    edges.retain(|e| {
+        let safe = !e.to.0.is_absolute()
+            && !e
+                .to
+                .0
+                .components()
+                .any(|c| matches!(c, camino::Utf8Component::ParentDir));
+        if !safe {
+            warnings.push(format!("link target escapes wiki: {}", e.to.0));
+        }
+        safe
+    });
     // Dedup by (to, relation_type, section).
+    edges.sort_by(|a, b| {
+        (&a.to, &a.relation_type, &a.section_source).cmp(&(
+            &b.to,
+            &b.relation_type,
+            &b.section_source,
+        ))
+    });
     edges.dedup_by(|a, b| {
         a.to == b.to && a.relation_type == b.relation_type && a.section_source == b.section_source
     });
@@ -73,40 +93,41 @@ fn edge(from: &PathScope, to: &str, relation_type: &str, section: String) -> Edg
 fn extract_wikilinks(body: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
     let mut current_section = String::new();
-    let mut it = char_indices_of(body).peekable();
-    while let Some((i, c)) = it.next() {
-        if c == '#' {
-            // crude heading capture: collect the rest of the line
-            current_section = body[i + 1..]
-                .lines()
-                .next()
-                .unwrap_or("")
-                .trim()
-                .to_string();
-        }
-        if c == '[' && it.peek().map(|&(_, c2)| c2 == '[').unwrap_or(false) {
-            it.next(); // consume second '['
-            let mut target = String::new();
-            while let Some((_, c2)) = it.next() {
-                if c2 == ']' {
-                    let _ = it.next_if(|&(_, c3)| c3 == ']'); // consume closing
-                    // Strip optional anchor `#section` after the target.
-                    let base = target.split('#').next().unwrap_or("").trim();
-                    if !base.is_empty() {
-                        out.push((base.to_string(), current_section.clone()));
-                    }
-                    break;
-                }
-                target.push(c2);
+    let mut options = Options::empty();
+    options.insert(Options::ENABLE_WIKILINKS);
+    let mut heading = false;
+    for event in Parser::new_ext(body, options) {
+        match event {
+            Event::Start(Tag::Heading { .. }) => heading = true,
+            Event::Text(text) if heading => {
+                current_section = text.trim().to_string();
+                heading = false;
             }
+            Event::End(pulldown_cmark::TagEnd::Heading(_)) => heading = false,
+            Event::Start(Tag::Link {
+                link_type: LinkType::WikiLink { .. },
+                dest_url,
+                ..
+            }) => {
+                let target = dest_url.split('#').next().unwrap_or("").trim();
+                if !target.is_empty() {
+                    out.push((target.to_string(), current_section.clone()));
+                }
+            }
+            Event::Start(Tag::Link { dest_url, .. })
+                if !dest_url.contains(":")
+                    && !dest_url.starts_with("//")
+                    && (dest_url.ends_with(".md") || dest_url.contains(".md#")) =>
+            {
+                let target = dest_url.split('#').next().unwrap_or("").trim();
+                if !target.is_empty() {
+                    out.push((target.to_string(), current_section.clone()));
+                }
+            }
+            _ => {}
         }
     }
     out
-}
-
-/// Lazy iterator over (byte_index, char).
-fn char_indices_of(s: &str) -> impl DoubleEndedIterator<Item = (usize, char)> + '_ {
-    s.char_indices()
 }
 
 /// Resolve a wiki-link target into a root-relative path scope.
@@ -123,19 +144,21 @@ fn resolve_target(from: &PathScope, to: &str) -> PathScope {
     } else {
         format!("{normalized}.md")
     };
-    let mut parts = Vec::new();
-    let mut dir_utf = dir.to_path_buf();
+    let mut dir_utf = if to.starts_with('/') {
+        camino::Utf8PathBuf::new()
+    } else {
+        dir.to_path_buf()
+    };
     for seg in candidate.split('/') {
         match seg {
             "" | "." => {}
             ".." => {
-                dir_utf.pop();
+                if !dir_utf.pop() {
+                    return PathScope(camino::Utf8PathBuf::from("../").join(normalized));
+                }
             }
-            s => parts.push(s.to_string()),
+            s => dir_utf.push(s),
         }
-    }
-    if !parts.is_empty() {
-        dir_utf.extend(parts);
     }
     PathScope(dir_utf)
 }

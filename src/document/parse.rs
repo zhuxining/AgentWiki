@@ -6,6 +6,7 @@
 
 use camino::{Utf8Path, Utf8PathBuf};
 use sha2::{Digest, Sha256};
+use text_splitter::{ChunkConfig, TextSplitter};
 
 use crate::error::{AgentWikiError, Result};
 use crate::model::{Document, Fingerprint, Frontmatter, PathScope, Slice};
@@ -77,7 +78,23 @@ pub fn scope_path(root: &Utf8Path, p: &Utf8Path) -> Result<PathScope> {
         // Canonicalize can fail on a not-yet-created target; lexical check stands.
         _ => {}
     }
-    let _ = joined;
+    // A missing leaf can still have an existing parent symlink outside root.
+    for ancestor in joined
+        .ancestors()
+        .skip(1)
+        .take_while(|ancestor| root.exists() && ancestor.starts_with(root))
+    {
+        if let Ok(actual) = ancestor.canonicalize() {
+            let canonical_root = root.canonicalize().map_err(|source| AgentWikiError::Io {
+                path: root.to_path_buf(),
+                source,
+            })?;
+            if !actual.starts_with(canonical_root) {
+                return Err(AgentWikiError::PathOutsideRoot(p.to_path_buf()));
+            }
+            break;
+        }
+    }
     Ok(PathScope(p.to_path_buf()))
 }
 
@@ -161,46 +178,52 @@ pub fn chunk_document(title: &str, body: &str, path: &PathScope) -> Vec<Slice> {
     // Reserved for the semantic leg (see doc comment above).
     let _ = title;
     let mut sections: Vec<(String, String)> = Vec::new();
-    let mut headings: Vec<String> = Vec::new();
-    let mut content_lines: Vec<&str> = Vec::new();
-
-    let flush =
-        |sections: &mut Vec<(String, String)>, headings: &[String], content: &mut Vec<&str>| {
-            let text = content.join("\n").trim().to_string();
-            content.clear();
-            if text.is_empty() {
-                return;
+    use pulldown_cmark::{Event, Parser, Tag, TagEnd};
+    let mut headings: Vec<(usize, String)> = Vec::new();
+    let mut heading = None;
+    let mut text = String::new();
+    let mut start = 0;
+    let breadcrumb = |stack: &[(usize, String)]| {
+        stack
+            .iter()
+            .map(|(_, s)| s.as_str())
+            .collect::<Vec<_>>()
+            .join(" / ")
+    };
+    for (event, range) in Parser::new(body).into_offset_iter() {
+        match event {
+            Event::Start(Tag::Heading { level, .. }) => {
+                let content = body[start..range.start].trim();
+                if !content.is_empty() {
+                    sections.push((breadcrumb(&headings), content.to_owned()));
+                }
+                heading = Some(level as usize);
+                text.clear();
             }
-            sections.push((headings.join(" / "), text));
-        };
-
-    for line in body.split_terminator('\n') {
-        if let Some(h) = heading_of(line) {
-            flush(&mut sections, &headings, &mut content_lines);
-            // Replace everything from this level down: `level-1..` truncation.
-            let level = h.0;
-            let next_headings = headings[..level - 1]
-                .iter()
-                .cloned()
-                .chain(std::iter::once(h.1))
-                .collect::<Vec<_>>();
-            headings = next_headings;
-        } else {
-            content_lines.push(line);
+            Event::Text(value) | Event::Code(value) if heading.is_some() => text.push_str(&value),
+            Event::End(TagEnd::Heading(_)) => {
+                if let Some(level) = heading.take() {
+                    while headings.last().is_some_and(|(old, _)| *old >= level) {
+                        headings.pop();
+                    }
+                    headings.push((level, text.clone()));
+                }
+                start = range.end;
+            }
+            _ => {}
         }
     }
-    flush(&mut sections, &headings, &mut content_lines);
+    let content = body[start..].trim();
+    if !content.is_empty() {
+        sections.push((breadcrumb(&headings), content.to_owned()));
+    }
 
     // A document with no non-empty sections must still be addressable.
     let mut slices = Vec::new();
     let mut ordinal = 0u32;
     let has_content = sections.iter().any(|(_, c)| !c.is_empty());
     if sections.is_empty() || (!has_content && body.trim().is_empty()) {
-        slices.push(empty_slice(
-            path,
-            ordinal,
-            sections.first().map(|s| s.0.clone()).unwrap_or_default(),
-        ));
+        slices.push(empty_slice(path, ordinal, breadcrumb(&headings)));
         return slices;
     }
 
@@ -225,23 +248,6 @@ pub fn chunk_document(title: &str, body: &str, path: &PathScope) -> Vec<Slice> {
     slices
 }
 
-/// Extract `(level, heading_text)` for an ATX heading line.
-fn heading_of(line: &str) -> Option<(usize, String)> {
-    let trimmed = line.trim_start();
-    if !trimmed.starts_with('#') {
-        return None;
-    }
-    let hashes = trimmed.chars().take_while(|&c| c == '#').count();
-    if hashes > 6 {
-        return None;
-    }
-    let rest = trimmed[hashes..].trim();
-    if rest.is_empty() {
-        return None;
-    }
-    Some((hashes, rest.trim_end().trim().to_string()))
-}
-
 fn empty_slice(path: &PathScope, ordinal: u32, section: String) -> Slice {
     let source = section.clone();
     Slice {
@@ -260,89 +266,14 @@ fn empty_slice(path: &PathScope, ordinal: u32, section: String) -> Slice {
 /// small overlap between fragments and hard-wrapping a single oversized
 /// paragraph via a sliding window.
 fn split_oversized(content: &str) -> Vec<String> {
-    if content.chars().count() <= MAX_CHUNK_CHARS {
-        return vec![content.to_string()];
-    }
-    let paragraphs: Vec<&str> = content
-        .split("\n\n")
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .collect();
-
-    let mut out: Vec<String> = Vec::new();
-    let mut current = String::new();
-    for paragraph in paragraphs {
-        if paragraph.chars().count() > MAX_CHUNK_CHARS {
-            if !current.is_empty() {
-                out.push(current.clone());
-                current.clear();
-            }
-            out.extend(window(paragraph));
-            continue;
-        }
-        let candidate = if current.is_empty() {
-            paragraph.to_string()
-        } else {
-            format!("{current}\n\n{paragraph}")
-        };
-        if candidate.chars().count() <= MAX_CHUNK_CHARS {
-            current = candidate;
-        } else {
-            if !current.is_empty() {
-                out.push(current.clone());
-            }
-            let overlap = overlap_for(&current, paragraph);
-            current = if overlap.is_empty() {
-                paragraph.to_string()
-            } else {
-                format!("{overlap}\n\n{paragraph}")
-            };
-        }
-    }
-    if !current.is_empty() {
-        out.push(current);
-    }
-    out
-}
-
-/// Overlap prefix budgeted so the next fragment stays within the limit.
-fn overlap_for(previous: &str, upcoming: &str) -> String {
-    let budget = MAX_CHUNK_CHARS as isize - upcoming.chars().count() as isize - 2;
-    if budget <= 0 {
-        return String::new();
-    }
-    let take = usize::min(OVERLAP_CHARS, budget as usize);
-    previous
-        .chars()
-        .rev()
-        .take(take)
-        .collect::<Vec<char>>()
-        .into_iter()
-        .rev()
-        .collect::<String>()
-        .trim_start()
-        .to_string()
-}
-
-/// Hard-wrap one oversized paragraph as a sliding window with overlap.
-fn window(text: &str) -> Vec<String> {
-    let step = MAX_CHUNK_CHARS - OVERLAP_CHARS;
-    let chars: Vec<char> = text.chars().collect();
-    let mut out = Vec::new();
-    let mut start = 0usize;
-    while start < chars.len() {
-        let end = usize::min(start + MAX_CHUNK_CHARS, chars.len());
-        let window_s: String = chars[start..end].iter().collect();
-        if !out.is_empty() && window_s.chars().count() <= OVERLAP_CHARS {
-            break;
-        }
-        out.push(window_s);
-        if end >= chars.len() {
-            break;
-        }
-        start += step;
-    }
-    out
+    let config = ChunkConfig::new(MAX_CHUNK_CHARS)
+        .with_overlap(OVERLAP_CHARS)
+        .expect("overlap is smaller than chunk capacity")
+        .with_trim(true);
+    TextSplitter::new(config)
+        .chunks(content)
+        .map(ToOwned::to_owned)
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -353,6 +284,11 @@ fn window(text: &str) -> Vec<String> {
 ///
 /// Line endings are normalised. The fingerprint is computed from the raw bytes.
 pub fn read_document(root: &Utf8Path, path: &PathScope) -> Result<Document> {
+    read_document_with_body(root, path).map(|(document, _)| document)
+}
+
+pub fn read_document_with_body(root: &Utf8Path, path: &PathScope) -> Result<(Document, String)> {
+    scope_path(root, &path.0)?;
     let full = root.join(path.0.as_path());
     let meta = std::fs::metadata(&full).map_err(|e| AgentWikiError::Io {
         path: full.clone(),
@@ -369,24 +305,36 @@ pub fn read_document(root: &Utf8Path, path: &PathScope) -> Result<Document> {
         .map(|d| d.as_nanos() as i64)
         .unwrap_or(0);
 
-    let raw = String::from_utf8_lossy(&bytes);
-    let (frontmatter, _body) = parse_frontmatter(&raw);
+    let raw = std::str::from_utf8(&bytes).map_err(|error| AgentWikiError::Parse {
+        path: path.0.clone(),
+        message: error.to_string(),
+    })?;
+    let (frontmatter, body) = parse_frontmatter(raw);
+    if raw.trim_start_matches('\u{feff}').starts_with("---\n") && body == raw {
+        return Err(AgentWikiError::Parse {
+            path: path.0.clone(),
+            message: "malformed YAML frontmatter".into(),
+        });
+    }
     let title = frontmatter
         .get("title")
         .and_then(|v| v.as_str())
         .map(str::to_string)
         .unwrap_or_default();
 
-    Ok(Document {
-        path: path.clone(),
-        title,
-        frontmatter,
-        fingerprint: Fingerprint {
-            content_hash: hex::encode(Sha256::digest(&bytes)),
-            mtime_ns,
-            size: bytes.len() as u64,
+    Ok((
+        Document {
+            path: path.clone(),
+            title,
+            frontmatter,
+            fingerprint: Fingerprint {
+                content_hash: hex::encode(Sha256::digest(&bytes)),
+                mtime_ns,
+                size: bytes.len() as u64,
+            },
         },
-    })
+        body,
+    ))
 }
 
 /// Read one Markdown file and return its body with the frontmatter stripped.
@@ -395,14 +343,7 @@ pub fn read_document(root: &Utf8Path, path: &PathScope) -> Result<Document> {
 /// frontmatter, when present, is removed; a missing frontmatter returns the
 /// raw text as the body. Errors on read/fingerprint failures.
 pub fn read_body(root: &Utf8Path, path: &PathScope) -> Result<String> {
-    let full = root.join(path.0.as_path());
-    let bytes = std::fs::read(&full).map_err(|e| AgentWikiError::Io {
-        path: full.clone(),
-        source: e,
-    })?;
-    let raw = String::from_utf8_lossy(&bytes);
-    let (_, body) = parse_frontmatter(&raw);
-    Ok(body)
+    read_document_with_body(root, path).map(|(_, body)| body)
 }
 
 /// Recursively collect every `*.md` path (except the reserved `AGENTWIKI.md`

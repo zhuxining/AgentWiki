@@ -1,189 +1,231 @@
-//! Incremental projection of Markdown changes into the search index and the
-//! metadata ledger.
-//!
-//! Contract:
-//! - A single document parse failure must never abort a whole round: it is
-//!   recorded as a diagnostic and the remaining documents continue.
-//! - Index writes never roll back or overwrite Markdown — the projection stays
-//!   rebuildable.
-//! - `rebuild` is explicit (or used after a schema/index compromise); the fast
-//!   path short-circuits when the ledger already matches the archive snapshot.
-
+//! Incremental projection; confirm the ledger only after successful writes.
+use crate::error::{AgentWikiError, Result};
+use crate::model::{Fingerprint, PathScope, SyncReport};
+use crate::{
+    document, graph,
+    retrieval::{
+        LanceIndex,
+        embedding::{Embedder, input_text},
+    },
+    storage::MetaStore,
+};
 use camino::Utf8Path;
 use sha2::{Digest, Sha256};
 
-use crate::error::Result;
-use crate::model::{Fingerprint, PathScope, SyncReport};
-use crate::{graph, markdown, storage::MetaStore, tantivy_svc::TantalusIndex};
-
-/// A ready-to-run sync handles a wiki root, its derived indexes and a ledger.
-///
-/// Callers create it via [`SyncContext::assemble`]; it owns the resources.
 pub struct SyncContext {
     pub root: camino::Utf8PathBuf,
-    pub index: TantalusIndex,
+    pub index: LanceIndex,
     pub meta: MetaStore,
+    pub embedder: Option<std::sync::Mutex<Embedder>>,
+    pub embedding_error: Option<String>,
+    lock_path: camino::Utf8PathBuf,
 }
 
 impl SyncContext {
-    /// Assemble a sync context from a wiki root and an index directory.
     pub fn assemble(root: &Utf8Path, index_dir: &Utf8Path) -> Result<Self> {
-        std::fs::create_dir_all(index_dir).map_err(|e| crate::error::AgentWikiError::Io {
-            path: index_dir.to_path_buf(),
-            source: e,
+        Self::assemble_with_embedding(root, index_dir, None)
+    }
+    pub fn assemble_with_embedding(
+        root: &Utf8Path,
+        index_dir: &Utf8Path,
+        model: Option<&str>,
+    ) -> Result<Self> {
+        if model.is_some_and(|m| m != "BAAI/bge-small-zh-v1.5") {
+            return Err(AgentWikiError::Config("unsupported embedding model".into()));
+        }
+        std::fs::create_dir_all(index_dir).map_err(|source| AgentWikiError::Io {
+            path: index_dir.into(),
+            source,
         })?;
-        Ok(SyncContext {
-            root: root.to_path_buf(),
-            index: TantalusIndex::open(index_dir, None)?,
-            meta: MetaStore::open(index_dir)?,
+        let lock_path = index_dir.join("sync.lock");
+        let _lock = acquire_lock(&lock_path)?;
+        let (embedder, embedding_error) = match model.map(|_| Embedder::bge_small_zh()) {
+            Some(Ok(embedder)) => (Some(std::sync::Mutex::new(embedder)), None),
+            Some(Err(error)) => (None, Some(error)),
+            None => (None, None),
+        };
+        let meta = MetaStore::open(index_dir)?;
+        let index = LanceIndex::open(index_dir, model.map(|_| 512))?;
+        if meta.needs_rebuild {
+            index.reset()?;
+        }
+        Ok(Self {
+            root: root.into(),
+            index,
+            meta,
+            embedder,
+            embedding_error,
+            lock_path,
         })
     }
-
-    /// Incrementally reconcile the archive with the projection.
     pub fn ensure_fresh(&mut self) -> Result<SyncReport> {
-        // Snapshot the archive and short-circuit when nothing changed.
-        let (descriptors, generation) = self.snapshot_descriptors()?;
-        if self.generation()? == generation && !descriptors.is_empty() {
-            let unchanged = descriptors.len();
-            return Ok(SyncReport {
-                unchanged,
-                generation,
-                ..Default::default()
-            });
-        }
-
-        let prev = self.ledger_snapshot()?;
-        let current: std::collections::BTreeMap<String, Fingerprint> =
-            descriptors.into_iter().collect();
-        let mut degraded = Vec::new();
-        let mut indexed = 0usize;
-        let mut removed = 0usize;
-        let moved = 0usize;
-
-        // Compute deletions (paths in ledger but gone from archive).
-        let mut to_delete: Vec<String> = prev
-            .iter()
-            .filter(|(k, _)| !current.contains_key(*k))
-            .map(|(k, _)| k.clone())
-            .collect();
-        to_delete.sort();
-
-        // Compute changes: new, modified (mtime/size/content), or stale vectors.
-        let mut changed: Vec<(String, Fingerprint)> = Vec::new();
-        for (path, fp) in &current {
-            let is_new = !prev.contains_key(path);
-            let changed_stamp = prev.get(path).map(|p| {
-                p.mtime_ns != fp.mtime_ns || p.size != fp.size || p.content_hash != fp.content_hash
-            });
-            if is_new || changed_stamp.unwrap_or(true) {
-                changed.push((path.clone(), fp.clone()));
-            }
-        }
-        changed.sort_by(|a, b| a.0.cmp(&b.0));
-
-        for (path, fp) in &changed {
-            let scope = PathScope(Utf8Path::new(path).to_path_buf());
-            match self.index_document(&scope) {
-                Ok(()) => {
-                    indexed += 1;
-                    self.meta
-                        .upsert_ledger(&crate::storage::LedgerRow {
-                            path: path.clone(),
-                            content_hash: fp.content_hash.clone(),
-                            mtime_ns: fp.mtime_ns,
-                            size: fp.size,
-                            stable_identity: String::new(),
-                            sync_error: None,
-                        })
-                        .map_err(|e| degraded.push(format!("{path}: {e}")))
-                        .ok();
-                }
-                Err(e) => degraded.push(format!("{path}: {e}")),
-            }
-        }
-
-        // Move detection: a removed path whose content_hash equals a changed
-        // path's is a move; keep the stable identity.
-        for path in &to_delete {
-            let deleted = self
-                .index
-                .delete_path(&PathScope(Utf8Path::new(path).to_path_buf()))
-                .is_ok()
-                && self
-                    .meta
-                    .delete_ledger(&PathScope(Utf8Path::new(path).to_path_buf()))
-                    .is_ok();
-            if deleted {
-                removed += 1;
-            } else {
-                degraded.push(format!("failed to remove {path}"));
-            }
-        }
-
-        self.mark_index_complete(&generation)?;
-        Ok(SyncReport {
-            indexed,
-            removed,
-            moved,
-            unchanged: current.len().saturating_sub(changed.len()),
-            vectors_ready: 0,
-            vectors_pending: 0,
-            degraded,
-            generation,
-        })
+        let _lock = acquire_lock(&self.lock_path)?;
+        self.sync_locked()
     }
-
-    /// Wipe the projection and re-project the whole archive.
+    fn sync_locked(&mut self) -> Result<SyncReport> {
+        // Enumerate before reading: a failed read must never imply deletion.
+        let paths = document::snapshot(&self.root)?;
+        let current: std::collections::BTreeSet<_> =
+            paths.iter().map(|p| p.0.to_string()).collect();
+        let previous = self.meta.ledger_snapshot()?;
+        let mut report = SyncReport::default();
+        if let Some(error) = &self.embedding_error {
+            report
+                .degraded
+                .push(format!("embedding unavailable: {error}"));
+        }
+        for path in &paths {
+            let outcome = (|| -> Result<bool> {
+                document::scope_path(&self.root, &path.0)?;
+                let full = self.root.join(&path.0);
+                let metadata = std::fs::metadata(&full).map_err(|source| AgentWikiError::Io {
+                    path: full.clone(),
+                    source,
+                })?;
+                let modified = metadata
+                    .modified()
+                    .map_err(|source| AgentWikiError::Io { path: full, source })?;
+                let stamp = Fingerprint {
+                    content_hash: String::new(),
+                    size: metadata.len(),
+                    mtime_ns: modified
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_nanos() as i64,
+                };
+                let prev = previous.get(path.0.as_str());
+                let (sync_error, embedding_hash, identity) =
+                    self.meta.sync_state(path.0.as_str())?;
+                let vectors_current = self.embedder.is_none() || embedding_hash.is_some();
+                if sync_error.is_none()
+                    && vectors_current
+                    && prev.is_some_and(|p| p.mtime_ns == stamp.mtime_ns && p.size == stamp.size)
+                {
+                    return Ok(false);
+                }
+                let (doc, body) = document::parse::read_document_with_body(&self.root, path)?;
+                if sync_error.is_none()
+                    && vectors_current
+                    && prev.is_some_and(|p| p.content_hash == doc.fingerprint.content_hash)
+                {
+                    self.meta
+                        .update_fingerprint(path.0.as_str(), &doc.fingerprint)?;
+                    return Ok(false);
+                }
+                let slices = document::chunk_document(&doc.title, &body, path);
+                let (edges, warnings) = graph::extract_edges(path, &doc.frontmatter, &body);
+                report
+                    .degraded
+                    .extend(warnings.into_iter().map(|w| format!("{}: {w}", path.0)));
+                self.index.replace_slices(path, &slices)?;
+                self.meta.replace_document(path, &edges)?;
+                self.meta.set_title(path, &doc.title)?;
+                self.meta.upsert_ledger(&crate::storage::LedgerRow {
+                    path: path.0.to_string(),
+                    content_hash: doc.fingerprint.content_hash.clone(),
+                    mtime_ns: doc.fingerprint.mtime_ns,
+                    size: doc.fingerprint.size,
+                    stable_identity: if identity.is_empty() {
+                        hex::encode(Sha256::digest(format!(
+                            "{}:{}",
+                            path.0, doc.fingerprint.content_hash
+                        )))
+                    } else {
+                        identity
+                    },
+                    sync_error: self
+                        .embedder
+                        .as_ref()
+                        .map(|_| "vector projection incomplete".into()),
+                    embedding_hash: None,
+                    frontmatter_json: serde_json::to_string(&doc.frontmatter)
+                        .map_err(|e| AgentWikiError::Other(e.to_string()))?,
+                })?;
+                if let Some(embedder) = &self.embedder {
+                    let tags = doc
+                        .frontmatter
+                        .get("tags")
+                        .and_then(|v| v.as_array())
+                        .map(|v| {
+                            v.iter()
+                                .filter_map(|t| t.as_str().map(str::to_owned))
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    let inputs: Vec<String> = slices
+                        .iter()
+                        .map(|s| input_text(&doc.title, &tags, &s.section, &s.content))
+                        .collect();
+                    let input_hash = hex::encode(Sha256::digest(format!(
+                        "BAAI/bge-small-zh-v1.5:512:v1:{inputs:?}"
+                    )));
+                    if embedding_hash.as_deref() == Some(&input_hash) {
+                        self.meta.confirm_vectors(path.0.as_str(), &input_hash)?;
+                        return Ok(true);
+                    }
+                    let vectors = embedder
+                        .lock()
+                        .map_err(|e| AgentWikiError::Embedding(e.to_string()))?
+                        .embed(inputs)
+                        .map_err(AgentWikiError::Embedding)?;
+                    self.index.replace_vectors(path, &slices, &vectors)?;
+                    report.vectors_ready += vectors.len();
+                    self.meta.confirm_vectors(path.0.as_str(), &input_hash)?;
+                }
+                Ok(true)
+            })();
+            match outcome {
+                Ok(true) => report.indexed += 1,
+                Ok(false) => report.unchanged += 1,
+                Err(error) => report.degraded.push(format!(
+                    "{}: {error}; projection may be stale, retry on next sync",
+                    path.0
+                )),
+            }
+        }
+        for path in previous.keys().filter(|p| !current.contains(*p)) {
+            let scope = PathScope(path.into());
+            match self
+                .index
+                .delete_path(&scope)
+                .and_then(|()| self.meta.delete_ledger(&scope))
+            {
+                Ok(()) => report.removed += 1,
+                Err(error) => report
+                    .degraded
+                    .push(format!("{path}: deletion failed: {error}")),
+            }
+        }
+        self.meta.resolve_edges()?;
+        report.generation = hex::encode(Sha256::digest(format!(
+            "{:?}",
+            self.meta.ledger_snapshot()?
+        )));
+        self.meta.set_generation(&report.generation)?;
+        Ok(report)
+    }
     pub fn rebuild(&mut self) -> Result<SyncReport> {
+        let _lock = acquire_lock(&self.lock_path)?;
         self.index.reset()?;
         self.meta.clear()?;
-        self.ensure_fresh()
+        self.sync_locked()
     }
+}
 
-    // -- internals -----------------------------------------------------------
-
-    fn index_document(&mut self, path: &PathScope) -> Result<()> {
-        let doc = markdown::read_document(&self.root, path)?;
-        let body = markdown::read_body(&self.root, path)?;
-        let slices = markdown::chunk_document(&doc.title, &body, path);
-        let (edges, warns) = graph::extract_edges(path, &doc.frontmatter, &body);
-        self.index.replace_slices(path, &slices)?;
-        self.meta.replace_document(path, &edges)?;
-        for w in warns {
-            tracing::warn!("{}: {w}", path.0);
-        }
-        // Store the doc title so retrieval can surface it later.
-        self.meta.set_title(path, &doc.title)?;
-        Ok(())
-    }
-
-    /// Snapshot the archive as (path-relative, fingerprint) pairs + generation.
-    fn snapshot_descriptors(&self) -> Result<(Vec<(String, Fingerprint)>, String)> {
-        let paths = markdown::snapshot(&self.root)?;
-        let mut out = Vec::new();
-        for p in &paths {
-            if let Ok(doc) = markdown::read_document(&self.root, p) {
-                out.push((p.0.as_str().to_string(), doc.fingerprint));
-            }
-        }
-        let generation = hex::encode(Sha256::digest(
-            out.iter()
-                .map(|(p, f)| format!("{p}:{}\n", f.content_hash))
-                .collect::<String>()
-                .as_bytes(),
-        ));
-        Ok((out, generation))
-    }
-
-    fn generation(&self) -> Result<String> {
-        self.meta.generation()
-    }
-
-    fn ledger_snapshot(&self) -> Result<std::collections::BTreeMap<String, Fingerprint>> {
-        self.meta.ledger_snapshot()
-    }
-
-    fn mark_index_complete(&mut self, generation: &str) -> Result<()> {
-        self.meta.set_generation(generation)
-    }
+fn acquire_lock(path: &Utf8Path) -> Result<std::fs::File> {
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(path)
+        .map_err(|source| AgentWikiError::Io {
+            path: path.into(),
+            source,
+        })?;
+    fs2::FileExt::lock_exclusive(&file).map_err(|source| AgentWikiError::Io {
+        path: path.into(),
+        source,
+    })?;
+    Ok(file)
 }

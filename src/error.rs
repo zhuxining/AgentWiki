@@ -17,7 +17,7 @@ use camino::Utf8PathBuf;
 ///   failures are caught and downgraded into diagnostics by `sync`).
 /// - [`AgentWikiError::Parse`] — Markdown/YAML parse failure for one document.
 /// - [`AgentWikiError::Storage`] — SQLite metadata store failure.
-/// - [`AgentWikiError::Index`] — Tantivy index failure (rebuildable).
+/// - [`AgentWikiError::Index`] — LanceDB index failure (rebuildable).
 /// - [`AgentWikiError::Embedding`] — optional semantic leg unavailable; must
 ///   downgrade to keyword search, never break retrieval.
 #[derive(Debug, thiserror::Error)]
@@ -44,7 +44,7 @@ pub enum AgentWikiError {
     #[error("metadata store (SQLite) error: {0}")]
     Storage(#[from] rusqlite::Error),
 
-    #[error("search index (Tantivy) error: {0}")]
+    #[error("search index (LanceDB) error: {0}")]
     Index(String),
 
     #[error("embedding unavailable: {0}")]
@@ -59,9 +59,9 @@ pub enum AgentWikiError {
 
 pub type Result<T> = std::result::Result<T, AgentWikiError>;
 
-/// Build an [`AgentWikiError::Index`] from a Tantivy error.
+/// Build an [`AgentWikiError::Index`] from a retrieval backend error.
 ///
-/// Kept as a helper so `tantivy_svc` can map engine errors without depending on
+/// Kept as a helper so retrieval adapters can map engine errors without depending on
 /// this module's naming from each call site.
 pub fn index_err(context: impl std::fmt::Display) -> AgentWikiError {
     AgentWikiError::Index(context.to_string())

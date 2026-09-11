@@ -2,7 +2,7 @@
 
 面向多个 AI Agent 的本地优先 Markdown 知识检索层。Markdown 是事实源，检索索引和元数据存储都是可删除、可重建的派生数据。
 
-> **迁移状态**：本仓库已确定 LanceDB 目标方案，Rust 代码尚未整体迁移。当前检索引擎和 MCP 入口仍为占位接线；下文目标能力不代表当前已经可用。具体差距见 [架构与迁移说明](docs/ARCHITECTURE.md)。
+> **迁移状态**：Rust 主链路已切换到 LanceDB，MCP 已接入 rmcp 3.3。默认配置使用关键词检索；配置 embedding model 后启用 FastEmbed 向量投影。具体边界见 [架构与迁移说明](docs/ARCHITECTURE.md)。
 
 ## 目标能力
 
@@ -35,7 +35,7 @@ Markdown 文档库 + AGENTWIKI.md 规则
 
 ## 当前入口
 
-以下为现有命令形态；查询仍不能提供实际检索命中，MCP 命令仅输出接线提示：
+以下为现有命令形态：
 
 ```bash
 cargo build
@@ -70,14 +70,14 @@ cargo run --bin agentwiki validate-wiki --full --fix-format
 ```
 
 - `wiki_root`：Wiki 根目录；`~` 展开为主目录，相对路径以配置目录为基准。`--wiki-root` 优先于配置文件。
-- `embedding_model`：`null` 或缺省关闭语义检索。目标首个支持值为 `BAAI/bge-small-zh-v1.5`，由 FastEmbed 适配到相应模型资源；模型准备完成后支持离线使用。当前字段尚未接入推理。
+- `embedding_model`：`null` 或缺省关闭语义检索。支持值为 `BAAI/bge-small-zh-v1.5`，由 FastEmbed 适配并在同步时写入 LanceDB 向量投影；模型准备完成后支持离线使用。
 - 派生数据仍位于 `~/.agentwiki/`。当前共用一组投影；目标按规范化 Wiki 根目录隔离投影，模型缓存单独存放，无需新增配置项。
 
-Wiki 根目录的 `AGENTWIKI.md` 是唯一规则与 Agent 指导入口，不进入普通文档索引。Runtime 缺失时写入默认模板，已存在时不覆盖；当前 CLI 已调用 Runtime，MCP 尚未接入。必填字段由规则声明，系统不内置必填字段。
+Wiki 根目录的 `AGENTWIKI.md` 是唯一规则与 Agent 指导入口，不进入普通文档索引。Runtime 缺失时写入默认模板，已存在时不覆盖；CLI 与 MCP 共用 Runtime。必填字段由规则声明，系统不内置必填字段。
 
 ## 开发与文档
 
-Python 原型及其基准归档在 `legacy/python/`，不参与 Rust 开发。后续整体迁移包括源码目录、Cargo 依赖、源码内默认模板和测试，本轮只更新文档。
+Python 原型及其基准归档在 `legacy/python/`，不参与 Rust 开发。Rust 主链路已迁移到目标目录和 Cargo 依赖，后续只做行为与协议的增量收敛。
 
 | 文档 | 职责 |
 | --- | --- |

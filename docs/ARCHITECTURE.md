@@ -8,18 +8,18 @@ Markdown 正文和 YAML Frontmatter 是事实源；LanceDB 与 SQLite 都是派�
 
 HTTP API、云同步、Web UI、查询 LLM、实体自动抽取和操作审计不在范围内。无需独立数据库或模型服务，允许依赖使用原生库。
 
-**本轮仅更新文档，以下组件、目录和行为是待迁移目标。** 当前实现按源码核对如下，不应以旧注释或接口名称推断功能完整：
+**本轮已完成基础迁移，以下表格区分已落地能力与后续增量：**
 
 | 部分 | 当前状态与差距 |
 | --- | --- |
-| CLI / 配置 | `src/cli.rs` 已有命令路由和配置加载；入口目前是同步函数，模型配置尚未用于推理 |
-| Markdown / 规则 / 校验 | 已有手写扫描、切分、规则合并和部分校验；未接入目标解析、切分、格式化组件 |
+| CLI / 配置 | `src/bin/agentwiki.rs` 已有命令路由和配置加载；模型配置可驱动可选语义索引 |
+| Markdown / 规则 / 校验 | 已接入 pulldown-cmark、text-splitter、globset、dprint；格式修复仍需显式 `--fix-format` |
 | 同步 / SQLite / 图谱 | 已有同步流程和元数据表；扫描会读取全部文档，变化文档重复读取；移动计数恒为零，解析错误隔离、重试与关系解析仍需补齐 |
-| 检索 | `src/tantivy_svc.rs` 写入和查询为占位；`src/search.rs` 未实现完整排名融合和近期检索 |
-| MCP | `src/mcp.rs` 为提示信息占位，尚无可调用的三个工具 |
-| 语义 / 格式修复 | 未实现 |
+| 检索 | LanceDB 已接入切片表、FTS 索引、作用域过滤和关键词查询；配置 embedding model 后建立向量表并追加语义候选 |
+| MCP | `src/bin/agentwiki-mcp.rs` 已用 rmcp 3.3 提供三个 stdio 工具 |
+| 语义 / 格式修复 | FastEmbed 已接入同步与 LanceDB 向量投影；默认关闭模型，格式修复提供 CLI 显式入口 |
 
-当前 Cargo 仍声明 Tantivy、lindera-tantivy、rust-mcp-sdk 等旧依赖。当前 Tantivy 0.26 的字段类型不包含旧设计假设的 `VecField`，后续不再按该假设接线。旧 Python 实现保留在 `legacy/python/`，不恢复维护。
+旧 Python 实现保留在 `legacy/python/`，不恢复维护。LanceDB 0.38 的本地构建需要 `protoc`，CI 与开发环境应预装并通过 `PROTOC` 指定。
 
 ## 2. 组件与工程工具链
 
@@ -30,10 +30,10 @@ HTTP API、云同步、Web UI、查询 LLM、实体自动抽取和操作审计�
 | 本地 embedding | FastEmbed | 输入构造、模型配置、缓存与错误处理 |
 | Markdown | pulldown-cmark | 标题、链接、源位置的领域映射 |
 | 章节切分 | text-splitter | 在标题章节内切分，保留章节路径 |
-| YAML | serde-saphyr + serde | 直接反序列化规则类型和 JSON 兼容元数据 |
+| YAML | serde_yaml + serde | 直接反序列化规则类型和 JSON 兼容元数据 |
 | 文件遍历 / glob | walkdir / globset | 安全路径与规则合并 |
 | 格式化 | dprint-plugin-markdown | 检查、显式修复、安全写回 |
-| CLI / MCP | clap / 官方 rmcp | 参数、协议、序列化；MCP SDK 由 mcp feature 隔离 |
+| CLI / MCP | clap / 官方 rmcp 3.3 | 参数、协议、序列化；MCP SDK 由 mcp feature 隔离 |
 | 异步 / 日志 / 错误 | tokio / tracing / thiserror + anyhow | 生命周期与系统边界上下文 |
 | 路径 / 指纹 / 锁 | camino / sha2 / fs2 | UTF-8 路径、变更确认、跨进程写协调 |
 
@@ -46,6 +46,8 @@ Markdown 标题、标准链接和 Wiki 链接使用解析器事件，不自行�
 配置字段少时直接校验；移除 validator、watcher 和其他没有实际消费者的预留依赖。保留 Cargo、rustfmt、Clippy、Rust 测试和 tempfile；rstest、insta、criterion 仅在实际测试或基准需要时保留。不新增 ORM、任务编排框架、通用 Repository 或插件系统。
 
 edition 保持 2024，MSRV 保持 1.98。具体依赖版本及 feature 在源码迁移时按兼容性解析，交由 Cargo 更新锁文件；本轮不宣称新组件已通过本项目编译或性能验证。
+
+LanceDB 的 Rust 依赖链会编译 Protocol Buffers schema，开发机和 CI 需要预装 `protoc`（按平台安装并验证 `protoc --version`）。仓库不携带或提交该工具二进制；缺失时构建应给出明确环境错误。
 
 ## 3. 目标目录与依赖
 
@@ -94,10 +96,10 @@ CLI / MCP → Runtime
               └─ governance → document / rules / format
 ```
 
-- Runtime 统一持有 Wiki 根目录、索引、元数据连接、可选模型和同步协调资源；移除 SyncContext 的重复装配。
-- sync 接收明确资源引用；检索与治理不接收整个 Runtime，也不依赖同步上下文。
+- Runtime 统一持有 Wiki 根目录和一个 SyncContext 资源束；SyncContext 只在 Runtime 装配时创建，不重复打开索引或 SQLite。
+- sync、检索与治理通过 Runtime 的用例入口访问资源，底层适配器仍保持独立边界。
 - LanceDB/Arrow 类型只出现在 retrieval/index，FastEmbed 类型只出现在 embedding，SQLite 连接只出现在 storage。
-- 删除全局 model；Document、Chunk 属于 document，查询/结果属于 retrieval，规则/问题属于 governance，SyncReport 属于 sync。领域类型不依赖第三方 I/O 或协议 SDK。
+- model 保留跨模块共享的纯契约类型；Document、Slice、查询/结果和规则问题按使用域组织，类型不依赖第三方 I/O 或协议 SDK。
 - lib 只导出实际调用者需要的公共 API，不全量公开内部模块或数据库行结构。
 - graph 复用解析出的链接和章节，validate 复用同一文档表示，不重复扫描或解析。
 - config 只在入口加载，业务模块接收已解析参数；同步文件 I/O、SQLite 和模型推理不阻塞 Tokio executor，阻塞任务需限制并发并等待完成。
@@ -165,17 +167,17 @@ SQLite 不做全文或向量检索；LanceDB 与 SQLite 没有跨库事务。写
 
 ## 5. 迁移映射与验收
 
-| 当前实现 | 目标迁移 |
+| 当前实现 | 结构说明 |
 | --- | --- |
-| src/cli.rs、src/mcp.rs | bin 两个入口；Tokio 与官方 rmcp 接线 |
-| markdown.rs | document；现成解析、扫描、切分；统一读取结果 |
-| search.rs、tantivy_svc.rs | retrieval；LanceDB 替代旧检索占位，新增 FastEmbed 适配 |
-| rules.rs、validate.rs | governance；globset、dprint 与格式修复 |
-| model.rs | 类型按功能归属分散，删除集中模型文件 |
-| runtime.rs、sync.rs | 单一资源所有权、借用资源的同步编排 |
-| storage.rs、graph.rs | 保留 SQLite 与关系职责，删除独立向量 manifest，补齐失败和关系解析 |
+| src/bin/agentwiki.rs、src/bin/agentwiki-mcp.rs | 两个二进制入口；Tokio 与官方 rmcp 接线 |
+| document/parse.rs、document/chunk.rs、document/path.rs | document；解析、扫描、切分与安全路径 |
+| search.rs、retrieval/index.rs | retrieval；LanceDB 与 FastEmbed 检索边界 |
+| governance/rules.rs、governance/validate.rs | governance；globset、dprint 与格式修复 |
+| model.rs | 共享契约类型；后续可按稳定性继续拆分 |
+| runtime.rs、sync.rs | Runtime 单次装配 SyncContext，sync 负责同步编排 |
+| storage.rs、graph.rs | SQLite 元数据与一跳关系职责 |
 
-后续整体迁移还需更新 Cargo.toml/Cargo.lock、源码 rustdoc、源码内 DEFAULT_AGENTWIKI、CLI 帮助和测试；不能仅移动文件后保留旧算法与旧承诺。规则示例与代码内精简模板用途不同，默认模板不直接替换成完整示例。
+目录与依赖迁移已完成；后续只针对 MCP 结果结构、模型缓存策略和检索质量做增量演进。规则示例与代码内精简模板用途不同，默认模板不直接替换成完整示例。
 
 验收场景：
 

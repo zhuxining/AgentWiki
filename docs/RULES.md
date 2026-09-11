@@ -1,6 +1,6 @@
 # AGENTWIKI.md 规则配置参考
 
-> **目标契约，待整体迁移。** 当前已有规则解析与部分校验；globset、内置 dprint 和显式格式修复尚未接入。本文描述迁移后的统一行为，当前实现状态见 [架构](ARCHITECTURE.md)。
+> **当前规则契约。** Rust 实现已接入 globset、内置 dprint 和显式格式修复；行为与边界以本文和 [架构](ARCHITECTURE.md) 为准。
 
 AgentWiki 使用 Wiki 根目录下的 `AGENTWIKI.md` 作为规则和指引文件。该文件是 Markdown：
 
@@ -16,7 +16,7 @@ AgentWiki 使用 Wiki 根目录下的 `AGENTWIKI.md` 作为规则和指引文件
 `AGENTWIKI.md` 不会作为普通文档参与索引。索引是可删除、可重建的派生数据，Markdown 文档
 仍然是知识库的事实源。
 
-这是唯一的规则入口。**Runtime 启动时会自动初始化**：目标 CLI 与 MCP 共用装配入口（当前仅 CLI 已接入），检查 Wiki 根目录，
+这是唯一的规则入口。**Runtime 启动时会自动初始化**：CLI 与 MCP 共用装配入口，检查 Wiki 根目录，
 若缺少 `AGENTWIKI.md` 就写入随包分发的默认模板。已存在的文件**永远不会被覆盖**，手改内容在
 后续每次启动都保留。
 

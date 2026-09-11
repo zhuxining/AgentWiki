@@ -24,6 +24,24 @@ struct RawConfig {
 }
 
 impl AppConfig {
+    /// Resolve an index namespace after applying the entry point's root override.
+    pub fn projection_for_root(&self, root: &Utf8Path) -> Result<Utf8PathBuf> {
+        use sha2::{Digest, Sha256};
+        std::fs::create_dir_all(root).map_err(|source| AgentWikiError::Io {
+            path: root.into(),
+            source,
+        })?;
+        let root = root
+            .canonicalize_utf8()
+            .map_err(|source| AgentWikiError::Io {
+                path: root.into(),
+                source,
+            })?;
+        Ok(self
+            .projection_dir
+            .join("indexes")
+            .join(hex::encode(Sha256::digest(root.as_str()))))
+    }
     pub fn load() -> Result<AppConfig> {
         let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
         let dir = Utf8PathBuf::from_path_buf(home)
@@ -74,16 +92,18 @@ impl AppConfig {
 }
 
 fn validate_config(raw: &RawConfig, path: &Utf8Path) -> Result<()> {
-    if let Err(e) = validate_nonempty_path(&raw.wiki_root) {
+    if raw.wiki_root.as_str().trim().is_empty() {
         return Err(AgentWikiError::Config(format!(
-            "{path}: invalid `wiki_root`: {}",
-            e.code
+            "{path}: invalid `wiki_root`: empty_path"
         )));
     }
-    if let Err(e) = validate_model(&raw.embedding_model) {
+    if raw
+        .embedding_model
+        .as_deref()
+        .is_some_and(|model| model != "BAAI/bge-small-zh-v1.5")
+    {
         return Err(AgentWikiError::Config(format!(
-            "{path}: invalid `embedding_model`: {}",
-            e.code
+            "{path}: unsupported `embedding_model`"
         )));
     }
     Ok(())
@@ -91,20 +111,6 @@ fn validate_config(raw: &RawConfig, path: &Utf8Path) -> Result<()> {
 
 fn default_wiki_root() -> Utf8PathBuf {
     Utf8PathBuf::from(DEFAULT_WIKI_ROOT)
-}
-
-fn validate_nonempty_path(p: &Utf8PathBuf) -> std::result::Result<(), validator::ValidationError> {
-    if p.as_str().trim().is_empty() {
-        return Err(validator::ValidationError::new("empty_path"));
-    }
-    Ok(())
-}
-
-fn validate_model(m: &Option<String>) -> std::result::Result<(), validator::ValidationError> {
-    if m.as_deref().is_some_and(|s| s.trim().is_empty()) {
-        return Err(validator::ValidationError::new("empty_model"));
-    }
-    Ok(())
 }
 
 fn resolve_path(base_dir: &Utf8Path, value: &Utf8Path) -> Utf8PathBuf {

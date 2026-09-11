@@ -6,8 +6,8 @@
 
 - 始终使用简体中文沟通；优先给出结论、依据和可验证结果，避免重复说明。
 - 少写通用代码，优先标准库和已采用组件；新增包必须替代明确的自写职责，不为预留能力引入依赖。
-- 当前文档已切换为 LanceDB 目标架构，源码尚未整体迁移。不得将目标目录或接口描述成当前已实现；修改前读取实际 Cargo.toml、源码和测试。
-- 本轮文档更新不修改源码、Cargo.toml、Cargo.lock 或源码内默认模板。后续整体迁移按架构文档完成这些调整。
+- 源码已按 LanceDB 架构完成基础目录迁移；修改前仍需读取实际 Cargo.toml、源码和测试，不能仅凭设计文档推断行为。
+- 目录迁移与依赖切换已经落地，后续改动保持现有功能边界，不重新引入旧的扁平模块。
 - Rust 为唯一维护实现，legacy/python 为历史归档，不参与开发或 Rust 验收。
 - 复杂改动先明确目标、边界与验收；存在影响契约的歧义时说明取舍，不擅自扩大范围。
 
@@ -15,11 +15,12 @@
 
 - 保持单 package、共享库和 CLI/MCP 两个二进制；edition 2024，当前 MSRV 1.98。工具链、版本和 feature 以 Cargo.toml 为准。
 - 目标检索使用 LanceDB，推理使用 FastEmbed，元数据使用 rusqlite bundled。SQLite 不执行全文或向量查询。
-- 文档解析使用 pulldown-cmark、serde-saphyr，长章节切分使用 text-splitter，遍历使用 walkdir，模式匹配使用 globset，格式化使用 dprint-plugin-markdown。
-- CLI 使用 clap，MCP 使用官方 rmcp 并由 mcp feature 隔离；核心库不依赖 MCP SDK。移除无消费者的旧 SDK、watcher、配置校验与测试依赖，不建立替代框架。
+- 文档解析使用 pulldown-cmark、serde_yaml，长章节切分使用 text-splitter，遍历使用 walkdir，模式匹配使用 globset，格式化使用 dprint-plugin-markdown。
+- CLI 使用 clap，MCP 使用官方 rmcp 3.3 并由 mcp feature 隔离；核心库不依赖 MCP SDK。移除无消费者的旧 SDK、watcher、配置校验与测试依赖，不建立替代框架。
 - 复用 tokio、serde、camino、tracing、thiserror 和 anyhow；少量配置条件直接校验。检查现有依赖是否已提供能力，再决定新增依赖。
 - 收窄依赖 feature；更改清单后由 Cargo 解析锁文件，不手改 Cargo.lock。新增 API、语法或依赖不得无意提高 MSRV。
 - 审查依赖维护情况、安全接口、许可证和原生构建成本；允许依赖内部使用 unsafe 或原生库，不要求传递依赖树无 unsafe。cargo audit 不能替代依赖审查。
+- LanceDB 当前构建链需要 `protoc`；开发机和 CI 必须预装与平台匹配的 Protocol Buffers 编译器，并在构建前确认 `protoc --version`。不把生成的二进制提交到仓库。
 
 ## 结构与资源所有权
 
@@ -37,9 +38,9 @@ src/graph.rs    显式一跳文档关系
 ```
 
 - 目录随功能迁移创建，不声明空模块，不新增 workspace、通用 Repository 或无消费者的 trait。
-- Runtime 统一持有资源，sync 接收明确资源引用，不再创建重复 SyncContext。检索和治理不依赖同步上下文，也不接收整个 Runtime。
+- Runtime 统一持有一个 SyncContext 资源束，sync、检索和治理通过 Runtime 的用例入口访问，不重复装配索引或 SQLite。
 - LanceDB/Arrow 类型仅在 retrieval/index，FastEmbed 类型仅在 embedding，SQLite 连接仅在 storage；禁止越过适配边界操作底层资源。
-- 类型跟随功能归属，删除集中 model。领域类型不触碰文件系统，不依赖引擎、数据库或协议 SDK。数据库行结构留在 storage 内部。
+- model 保留跨 document、retrieval、governance 的纯契约类型；不触碰文件系统，不依赖引擎、数据库或协议 SDK。数据库行结构留在 storage 内部。
 - lib 仅导出调用者需要的公共 API；入口只负责配置、参数、协议和序列化，不复制业务实现。
 - document 统一生成解析结果，graph 和 validate 复用；不得分别实现标题、链接扫描或重复读取变化文档。
 

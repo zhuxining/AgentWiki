@@ -48,6 +48,12 @@ enum Command {
         /// Validate a single wiki-relative path; omit to validate the whole wiki.
         #[arg(long)]
         path: Option<String>,
+        /// Validate the whole wiki explicitly (required for full formatting).
+        #[arg(long)]
+        full: bool,
+        /// Rewrite Markdown formatting after checking it.
+        #[arg(long)]
+        fix_format: bool,
     },
     /// Print the resolved configuration.
     ShowConfig,
@@ -75,7 +81,11 @@ fn run() -> anyhow::Result<()> {
     // Ensure the wiki root exists before assembly (runtime seeds AGENTWIKI.md).
     std::fs::create_dir_all(&root).map_err(|e| anyhow::anyhow!("create root {root}: {e}"))?;
 
-    let mut rt = agentwiki::Runtime::assemble(&root, &cfg.projection_dir)?;
+    let mut rt = agentwiki::Runtime::assemble_with_embedding(
+        &root,
+        &cfg.projection_for_root(&root)?,
+        cfg.embedding_model.as_deref(),
+    )?;
 
     match cli.command {
         Command::Query {
@@ -84,13 +94,10 @@ fn run() -> anyhow::Result<()> {
             scope,
         } => {
             // Prefer to serve a fresh projection on-demand.
-            let report = rt.ensure_fresh()?;
-            let _ = report;
-
             let q = ContextQuery {
                 query,
                 scope,
-                limit: limit.clamp(1, 20),
+                limit,
                 ..Default::default()
             };
             let res = rt.query(&q)?;
@@ -118,16 +125,30 @@ fn run() -> anyhow::Result<()> {
             let report = rt.rebuild()?;
             print_report(&report);
         }
-        Command::ValidateWiki { path } => {
+        Command::ValidateWiki {
+            path,
+            full,
+            fix_format,
+        } => {
+            if path.is_none() && !full && fix_format {
+                anyhow::bail!("--fix-format requires --path or --full");
+            }
+            if path.is_some() && full {
+                anyhow::bail!("--path and --full are mutually exclusive");
+            }
             let scope = match path {
                 Some(p) => {
                     let scope =
-                        agentwiki::markdown::scope_path(&root, &camino::Utf8PathBuf::from(&p))?;
+                        agentwiki::document::scope_path(&root, &camino::Utf8PathBuf::from(&p))?;
                     Some(scope)
                 }
                 None => None,
             };
-            let issues = rt.validate(scope.as_ref())?;
+            let result = rt.validate_with_format(scope.as_ref(), scope.is_none(), fix_format)?;
+            for path in result.formatted_paths {
+                println!("formatted {path}");
+            }
+            let issues = result.issues;
             if issues.is_empty() {
                 println!("no issues");
             } else {

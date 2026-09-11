@@ -5,6 +5,7 @@
 
 use crate::error::Result;
 use crate::model::{EffectiveRules, Frontmatter, Rule, RuleSection};
+use globset::GlobBuilder;
 
 /// Decode rule-file frontmatter into a [`Rule`], applying contract defaults
 /// (`version = 1`, `name = "AgentWiki"`, `default_type = "note"`) and
@@ -32,94 +33,12 @@ pub fn parse_rules(fm: &Frontmatter) -> Result<Rule> {
 /// fnmatch glob match with `*` crossing `/` (RULES.md semantics, unlike
 /// `glob`-style matching). Supports `*`, `?`, `[...]` (negation, ranges).
 pub fn fnmatch(pattern: &str, text: &str) -> bool {
-    let pat: Vec<char> = pattern.chars().collect();
-    let txt: Vec<char> = text.chars().collect();
-    let (mut p, mut t) = (0usize, 0usize);
-    // `star`/`star_t`: last `*` position and the text offset it covers,
-    // for backtracking when a later part fails.
-    let mut star: Option<usize> = None;
-    let mut star_t = 0usize;
-
-    while t < txt.len() {
-        let matched = if p < pat.len() && pat[p] == '?' {
-            p += 1;
-            t += 1;
-            true
-        } else if p < pat.len() && pat[p] == '[' {
-            match class_index(&pat, p, txt[t]) {
-                Some(after) => {
-                    p = after;
-                    t += 1;
-                    true
-                }
-                None => false,
-            }
-        } else if p < pat.len() && pat[p] == txt[t] {
-            p += 1;
-            t += 1;
-            true
-        } else {
-            false
-        };
-        if matched {
-            continue;
-        }
-        if p < pat.len() && pat[p] == '*' {
-            star = Some(p);
-            while p < pat.len() && pat[p] == '*' {
-                p += 1;
-            }
-            star_t = t;
-            continue; // let the star match zero chars for now
-        }
-        match star {
-            Some(sp) => {
-                // Backtrack: star consumes one more character.
-                p = sp + 1;
-                star_t += 1;
-                t = star_t;
-                if t > txt.len() {
-                    return false;
-                }
-            }
-            None => return false,
-        }
-    }
-    while p < pat.len() && pat[p] == '*' {
-        p += 1;
-    }
-    p == pat.len()
-}
-
-/// Match a character class starting at `pat[p]` (`[`) against `ch`; returns
-/// the index past `]`, or `None` when not matched / unterminated.
-fn class_index(pat: &[char], p: usize, ch: char) -> Option<usize> {
-    let mut i = p + 1;
-    let negate = matches!(pat.get(i), Some('!') | Some('^'));
-    if negate {
-        i += 1;
-    }
-    let mut matched = false;
-    let mut first = true;
-    while i < pat.len() {
-        let c = pat[i];
-        if c == ']' && !first {
-            return if matched != negate { Some(i + 1) } else { None };
-        }
-        first = false;
-        if i + 2 < pat.len() && pat[i + 1] == '-' && pat[i + 2] != ']' {
-            if pat[i] <= ch && ch <= pat[i + 2] {
-                matched = true;
-            }
-            i += 3;
-        } else {
-            if c == ch {
-                matched = true;
-            }
-            i += 1;
-        }
-    }
-    None // unterminated '['
+    GlobBuilder::new(pattern)
+        .literal_separator(false)
+        .backslash_escape(false)
+        .build()
+        .map(|glob| glob.compile_matcher().is_match(text))
+        .unwrap_or(false)
 }
 
 /// True when a wiki-relative `path` falls under a section pattern: plain

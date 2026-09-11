@@ -14,11 +14,11 @@ path = "src/lib.rs"
 
 [[bin]]
 name = "agentwiki"
-path = "src/cli.rs"
+path = "src/bin/agentwiki.rs"
 
 [[bin]]
 name = "agentwiki-mcp"
-path = "src/mcp.rs"
+path = "src/bin/agentwiki-mcp.rs"
 
 # ---------------------------------------------------------------------------
 # Core runtime, config, error handling
@@ -35,12 +35,10 @@ tokio = { version = "1", features = [
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
-validator = { version = "0.20", features = ["derive"] }
 thiserror = "2"
 anyhow = "1"
 camino = { version = "1", features = ["serde1"] }
 dirs = "6"
-path-absolutize = "3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
@@ -49,40 +47,41 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # ---------------------------------------------------------------------------
 sha2 = "0.10"
 hex = "0.4"
-pulldown-cmark = "0.12"
+pulldown-cmark = "0.13"
 rusqlite = { version = "0.40", features = ["bundled"] }
-notify = "8"
-notify-debouncer-full = "0.6"
 fs2 = "0.4"
+tempfile = "3"
 time = { version = "0.3", features = ["formatting"] }
 
 # ---------------------------------------------------------------------------
-# Retrieval (Tantivy search engine + Chinese tokenizer)
+# Retrieval (embedded LanceDB + local embeddings)
 # ---------------------------------------------------------------------------
-tantivy = "0.26"
-lindera-tantivy = "5"
+lancedb = { version = "0.38", features = ["remote"] }
+lance-index = "11"
+arrow-array = "58"
+arrow-schema = "58"
+futures = "0.3"
+fastembed = "6"
+text-splitter = { version = "0.27", features = ["markdown"] }
+walkdir = "2"
+globset = "0.4"
+dprint-plugin-markdown = "0.22"
 
 # ---------------------------------------------------------------------------
 # CLI / MCP entry points
 # ---------------------------------------------------------------------------
 clap = { version = "4", features = ["derive", "env"] }
-clap-verbosity-flag = "3"
 
 # MCP server SDK — kept behind the `mcp` feature so the core library stays
 # SDK-free and the ecosystem churn does not block the rest of the workspace.
-rust-mcp-sdk = { version = "2", optional = true }
-tower = { version = "0.5", optional = true }
-async-trait = { version = "0.1", optional = true }
+rmcp = { version = "3.3", optional = true, features = ["server", "transport-io"] }
+schemars = { version = "1", optional = true }
 
 [features]
 default = []
-mcp = ["dep:rust-mcp-sdk", "dep:tower", "dep:async-trait"]
+mcp = ["dep:rmcp", "dep:schemars"]
 
 [dev-dependencies]
-tempfile = "3"
-rstest = "0.23"
-insta = { version = "1", features = ["yaml"] }
-criterion = "0.6"
 
 [profile.release]
 lto = "thin"

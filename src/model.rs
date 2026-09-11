@@ -1,6 +1,6 @@
 //! Pure domain types (a `model`, formerly "domain").
 //!
-//! This module is the dependency-free foundation: it must not import Tantivy,
+//! This module is the dependency-free foundation: it must not import LanceDB,
 //! SQLite, MCP, CLAP, or touch the filesystem. It holds value objects and query
 //! structs that are serialised to JSON for the MCP layer and used as the
 //! contract between `sync`, `search` and `validate`.
@@ -38,6 +38,12 @@ pub struct Document {
     pub title: String,
     pub frontmatter: Frontmatter,
     pub fingerprint: Fingerprint,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ValidationResult {
+    pub issues: Vec<Issue>,
+    pub formatted_paths: Vec<String>,
 }
 
 /// A heading-aware slice of a document, produced by `markdown::chunk_document`.
@@ -190,7 +196,7 @@ pub struct SearchResult {
 }
 
 /// Query parameters for a context retrieval.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ContextQuery {
     /// Free-text query; empty means "recent documents".
     pub query: String,
@@ -221,6 +227,20 @@ pub struct SyncReport {
     pub degraded: Vec<String>,
     /// Generation marker for the fast path.
     pub generation: String,
+}
+
+impl Default for ContextQuery {
+    fn default() -> Self {
+        Self {
+            query: String::new(),
+            scope: String::new(),
+            limit: 10,
+            tags: Vec::new(),
+            note_types: Vec::new(),
+            metadata_filters: Frontmatter::new(),
+            min_similarity: 0.0,
+        }
+    }
 }
 
 impl ContextQuery {

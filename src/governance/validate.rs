@@ -4,22 +4,25 @@
 use camino::Utf8Path;
 
 use crate::error::Result;
+use crate::governance::rules;
 use crate::model::{Frontmatter, Issue, PathScope, Rule, Severity};
-use crate::rules;
 
 /// Validate one document (when `scope` is `Some`) or the whole wiki.
 ///
 /// Issues are sorted by path then kind for stable output. `AGENTWIKI.md`
 /// itself is never validated as content.
 pub fn validate_wiki(root: &Utf8Path, scope: Option<&PathScope>) -> Result<Vec<Issue>> {
+    if let Some(path) = scope {
+        crate::document::scope_path(root, &path.0)?;
+    }
     let mut issues = Vec::new();
     let paths = match scope {
         Some(p) => vec![p.clone()],
-        None => crate::markdown::snapshot(root)?,
+        None => crate::document::snapshot(root)?,
     };
 
     // Known document set, for broken-link detection.
-    let known: std::collections::HashSet<String> = crate::markdown::snapshot(root)?
+    let known: std::collections::HashSet<String> = crate::document::snapshot(root)?
         .into_iter()
         .map(|p| p.0.to_string())
         .collect();
@@ -64,6 +67,15 @@ fn validate_one(
     tag_counts: Option<&std::collections::BTreeMap<String, usize>>,
     issues: &mut Vec<Issue>,
 ) {
+    if let Err(error) = crate::document::scope_path(root, &path.0) {
+        issues.push(Issue {
+            path: path.0.to_string(),
+            kind: "path.unsafe".into(),
+            message: error.to_string(),
+            severity: Severity::Error,
+        });
+        return;
+    }
     let full = root.join(path.0.as_path());
     let Ok(raw) = std::fs::read_to_string(&full) else {
         issues.push(Issue {
@@ -75,7 +87,7 @@ fn validate_one(
         return;
     };
 
-    let (frontmatter, body) = crate::markdown::parse_frontmatter(&raw);
+    let (frontmatter, body) = crate::document::parse_frontmatter(&raw);
 
     // Open-but-unclosed YAML fence: parse_frontmatter yields an empty map and
     // the raw text as body — detectable exactly when the body equals the raw.
@@ -111,7 +123,7 @@ fn validate_one(
     }
 
     // 4) Structural: non-empty content must produce at least one slice.
-    let slices = crate::markdown::chunk_document(
+    let slices = crate::document::chunk_document(
         frontmatter
             .get("title")
             .and_then(|v| v.as_str())
@@ -277,7 +289,7 @@ fn collect_tag_counts(
         let Ok(raw) = std::fs::read_to_string(&full) else {
             continue;
         };
-        let (fm, _) = crate::markdown::parse_frontmatter(&raw);
+        let (fm, _) = crate::document::parse_frontmatter(&raw);
         let Some(serde_json::Value::Array(items)) = fm.get("tags") else {
             continue;
         };
@@ -299,8 +311,8 @@ fn load_rules(root: &Utf8Path) -> (Option<Rule>, Option<Issue>) {
     let Ok(raw) = std::fs::read_to_string(&p) else {
         return (None, None);
     };
-    let (fm, _) = crate::markdown::parse_frontmatter(&raw);
-    match crate::rules::parse_rules(&fm) {
+    let (fm, _) = crate::document::parse_frontmatter(&raw);
+    match crate::governance::rules::parse_rules(&fm) {
         Ok(rule) => (Some(rule), None),
         Err(e) => (
             None,
