@@ -1,76 +1,66 @@
 # AgentWiki
 
-面向多个 AI Agent 的本地优先 Markdown 知识检索层（Rust 实现）。Markdown 文件是事实源，
-全文索引与元数据存储都是可删除、可重建的派生投影。
+面向多个 AI Agent 的本地优先 Markdown 知识检索层。Markdown 是事实源，检索索引和元数据存储都是可删除、可重建的派生数据。
 
-## 项目价值
+> **迁移状态**：本仓库已确定 LanceDB 目标方案，Rust 代码尚未整体迁移。当前检索引擎和 MCP 入口仍为占位接线；下文目标能力不代表当前已经可用。具体差距见 [架构与迁移说明](docs/ARCHITECTURE.md)。
 
-Agent 的原生文件工具擅长**已知路径**的读取与文档增删改，却不擅长"从未知到已知"：当任务
-涉及历史方案、团队约定、已有决策、跨文档关系或近期变化时，Agent 不知道去哪里找、找什么。
+## 目标能力
 
-AgentWiki 补上这一环：为 Agent 提供精确、关键词、语义、混合与近期检索能力，返回**可继续
-读取的证据片段与路径**，让 Agent 用原生工具回读原文后形成结论。它只做"检索 + 治理"，不做
-文档读写、不做查询 LLM、不依赖云端服务——本地优先，离线可用。
+Agent 原生文件工具负责已知路径读取和文档增删改；AgentWiki 负责发现未知位置的知识，返回可回读的路径、章节和证据。
 
-## 基础方案
+- 检索：关键词、语义、混合、精确匹配和近期搜查，支持范围与元数据过滤。
+- 证据：章节片段、命中来源和最多一跳的显式文档关系。
+- 治理：获取 Wiki 规则，校验 Frontmatter、目录约束、内部链接与 Markdown 格式。
+- 格式修复：默认只检查，显式请求后用内置格式化组件修复格式并重新校验。
 
+不提供 HTTP API、云同步、Web UI、查询 LLM 或独立数据库服务。面向一万篇以内的本地 Wiki，允许依赖使用原生库。
+
+## 目标方案
+
+```text
+Markdown 文档库 + AGENTWIKI.md 规则
+                ↓ 增量同步、解析、章节切分
+       ┌────────┴──────────┐
+       │ LanceDB           │ SQLite
+       │ 全文 / 向量 / RRF │ 账本 / 文档信息 / 关系
+       └────────┬──────────┘
+                ↑ FastEmbed 本地向量生成
+                ↓
+         章节证据与降级诊断
+                ↓
+          CLI / MCP 三个工具
 ```
-Markdown 文档库（事实源，含 YAML Frontmatter）
-        │  增量同步（mtime/size 快速筛选 + 内容哈希确认）
-        ▼
-   ┌─────────────────────────────┐
-   │ Tantivy 检索引擎             │  BM25 关键词（lindera 中文分词）
-   │ + 可选本地向量腿（按里程碑接入）│  语义检索（模型变化自动重建）
-   └──────────────┬──────────────┘
-                  │ + SQLite 元数据：同步账本 / 图谱 / 状态（不做检索）
-                  ▼
-       排名融合 → 章节级证据 + 一跳文档关系 + 降级诊断
-                  ▼
-        CLI（agentwiki） / MCP（agentwiki-mcp）
-```
 
-- **事实源**：Markdown 正文 + YAML Frontmatter；Wiki 根目录的 `AGENTWIKI.md` 是唯一的规则
-  与 Agent 指导入口（首次启动自动写入默认模板，已有文件永不覆盖）。
-- **投影**：Tantivy 提供关键词全文检索（BM25 + `lindera` 中文分词）与可选的向量腿；SQLite
-  仅作元数据镜像（同步账本 / 文档图谱 / 同步状态），**不执行**全文或向量检索。两者都可随时
-  从 Markdown 全量重建。
-- **检索**：关键词、语义与近期信号在候选集上做排名融合；同一文档最多返回两个片段；单个
-  检索源失败只降级（`degraded` 报告原因），不中断整次检索；从内部链接与 Frontmatter
-  `relations` 派生一跳文档关系。
-- **治理**：`get_wiki_rules` 返回目录适用的必填字段、类型与标签规则（完全由 `AGENTWIKI.md`
-  配置决定，系统不内置必填字段）；`validate_wiki` 只报告格式、Frontmatter 与内部链接问题，
-  绝不自动改写 Markdown。
-- **入口**：
-  - CLI（二进制 `agentwiki`）：本地检索、索引同步、重建、校验与治理维护；
-  - MCP（二进制 `agentwiki-mcp`）：为 Agent 暴露 `get_wiki_context`（任务上下文检索）、
-    `get_wiki_rules`（规则获取）、`validate_wiki`（规范校验）。已知路径读取与文档增删改
-    仍由 Agent 原生工具完成，MCP 不重复暴露。
+单 Rust package，两个二进制入口；代码按 `document`、`retrieval`、`governance` 聚合。复用现成解析、切分、检索、推理和格式化组件，Runtime 统一持有资源。向量同步批处理，不维护后台队列或 watcher。
 
-## 快速开始
+## 当前入口
+
+以下为现有命令形态；查询仍不能提供实际检索命中，MCP 命令仅输出接线提示：
 
 ```bash
-# 构建
 cargo build
-
-# 搜查任务上下文（空查询列出最近修改的文档）
-cargo run --bin agentwiki query "认证方案"
-cargo run --bin agentwiki query
-
-# 索引与治理维护
+cargo run --bin agentwiki show-config
 cargo run --bin agentwiki sync-index
 cargo run --bin agentwiki rebuild-index
-cargo run --bin agentwiki validate-wiki            # 全库校验
 cargo run --bin agentwiki validate-wiki --path decisions/auth.md
-
-# 查看解析后的配置
-cargo run --bin agentwiki show-config
-
-# 启动 MCP（stdio；SDK 接线完成前为占位实现）
+cargo run --bin agentwiki validate-wiki
+cargo run --bin agentwiki query "认证方案"
+cargo run --bin agentwiki query ""
 cargo run --bin agentwiki-mcp --features mcp
 ```
 
-配置统一放在用户配置目录 `~/.agentwiki/config.json`，首次运行缺少文件时自动创建默认配置；
-进程环境变量不参与配置。配置文件只有两个字段：
+**迁移后新增，当前不可用**：
+
+```bash
+cargo run --bin agentwiki validate-wiki --path decisions/auth.md --fix-format
+cargo run --bin agentwiki validate-wiki --full --fix-format
+```
+
+默认校验不写文件。单文件修复必须指定 `--path`，全库修复必须指定 `--full`；两种范围互斥。格式修复不修正标签、链接或业务内容。
+
+## 配置与数据
+
+配置保留在 `~/.agentwiki/config.json`，缺失时创建默认配置，不读取业务环境变量配置：
 
 ```json
 {
@@ -79,29 +69,20 @@ cargo run --bin agentwiki-mcp --features mcp
 }
 ```
 
-- `wiki_root`：Wiki 文档根目录（事实源）。`~` 前缀展开为用户主目录，相对路径以配置文件
-  所在目录为基准；
-- `embedding_model`：可选语义模型标识；`null`/缺省表示关闭语义腿（语义检索随后续里程碑
-  接入）。未知字段会被忽略，便于向后兼容。
+- `wiki_root`：Wiki 根目录；`~` 展开为主目录，相对路径以配置目录为基准。`--wiki-root` 优先于配置文件。
+- `embedding_model`：`null` 或缺省关闭语义检索。目标首个支持值为 `BAAI/bge-small-zh-v1.5`，由 FastEmbed 适配到相应模型资源；模型准备完成后支持离线使用。当前字段尚未接入推理。
+- 派生数据仍位于 `~/.agentwiki/`。当前共用一组投影；目标按规范化 Wiki 根目录隔离投影，模型缓存单独存放，无需新增配置项。
 
-派生投影（Tantivy 索引与 SQLite 元数据）固定在配置目录 `~/.agentwiki/` 下，无需配置；
-`--wiki-root` CLI 参数可以覆盖配置文件中的 `wiki_root`。
+Wiki 根目录的 `AGENTWIKI.md` 是唯一规则与 Agent 指导入口，不进入普通文档索引。Runtime 缺失时写入默认模板，已存在时不覆盖；当前 CLI 已调用 Runtime，MCP 尚未接入。必填字段由规则声明，系统不内置必填字段。
 
-## 实现状态
+## 开发与文档
 
-Rust 重写进行中（Python 原型已归档于 `legacy/python/`，基准脚本与语料在
-`legacy/python/benchmarks/`，不再维护）。
+Python 原型及其基准归档在 `legacy/python/`，不参与 Rust 开发。后续整体迁移包括源码目录、Cargo 依赖、源码内默认模板和测试，本轮只更新文档。
 
-- 已实现：CLI 子命令与配置加载、Markdown 扫描与切块、增量同步与 rebuild、SQLite 元数据
-  （账本/图谱/状态）、文档图谱、格式与规则校验；
-- 进行中（下一里程碑）：Tantivy 全文接线与检索融合、MCP SDK 三个工具、可选语义向量腿。
-
-## 文档导航
-
-| 文档 | 内容 |
+| 文档 | 职责 |
 | --- | --- |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 详细架构设计：数据与检索机制、模块依赖、实现状态、设计取舍 |
-| [docs/MCP_TOOLS.md](docs/MCP_TOOLS.md) | MCP 协议契约：三个工具的参数与返回结构 |
-| [docs/RULES.md](docs/RULES.md) | `AGENTWIKI.md` 规则配置参考：字段、合并语义、错误码 |
-| [docs/AGENTWIKI.md](docs/AGENTWIKI.md) | 规则文件的完整参考示例（含 sections / tag_aliases） |
-| [AGENTS.md](AGENTS.md) | 工程开发规范：构建、测试、代码与提交要求 |
+| [架构](docs/ARCHITECTURE.md) | 组件、目标目录、数据流、迁移映射及验收 |
+| [MCP 契约](docs/MCP_TOOLS.md) | 三个工具的目标参数、结果与副作用 |
+| [规则参考](docs/RULES.md) | Frontmatter、目录匹配、标签与格式规范 |
+| [规则示例](docs/AGENTWIKI.md) | 可复制的完整规则与 Agent 指引 |
+| [工程规范](AGENTS.md) | 开发边界、依赖、测试和提交要求 |

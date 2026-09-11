@@ -1,5 +1,7 @@
 # AGENTWIKI.md 规则配置参考
 
+> **目标契约，待整体迁移。** 当前已有规则解析与部分校验；globset、内置 dprint 和显式格式修复尚未接入。本文描述迁移后的统一行为，当前实现状态见 [架构](ARCHITECTURE.md)。
+
 AgentWiki 使用 Wiki 根目录下的 `AGENTWIKI.md` 作为规则和指引文件。该文件是 Markdown：
 
 - YAML Frontmatter：结构化规则配置；
@@ -14,7 +16,7 @@ AgentWiki 使用 Wiki 根目录下的 `AGENTWIKI.md` 作为规则和指引文件
 `AGENTWIKI.md` 不会作为普通文档参与索引。索引是可删除、可重建的派生数据，Markdown 文档
 仍然是知识库的事实源。
 
-这是唯一的规则入口。**启动时会自动初始化**：CLI 与 MCP 在装配运行时会检查 Wiki 根目录，
+这是唯一的规则入口。**Runtime 启动时会自动初始化**：目标 CLI 与 MCP 共用装配入口（当前仅 CLI 已接入），检查 Wiki 根目录，
 若缺少 `AGENTWIKI.md` 就写入随包分发的默认模板。已存在的文件**永远不会被覆盖**，手改内容在
 后续每次启动都保留。
 
@@ -99,11 +101,19 @@ sections:
 
 ### `sections[]` 字段
 
-`path` 按 Wiki 根目录下的相对路径匹配。配置 `path: decisions` 时，匹配 `decisions` 目录及其所有后代路径（如 `decisions/example.md`、`decisions/archive/old.md`），但不匹配 `projects/decisions/example.md` 或 `decisions-old/example.md`。`path` 支持 glob；例如 `*decisions*` 会匹配路径字符串中包含 `decisions` 的路径，`projects/*/decisions` 会匹配项目目录下的 decisions 子目录。glob 应谨慎使用，避免范围过宽。
+path 使用 Wiki 根目录下的相对路径，统一使用 `/`：
+
+- 不含模式字符的目录名匹配自身及子树：`decisions` 覆盖 `decisions/a.md`，不覆盖 `decisions-old/a.md` 或 `projects/decisions/a.md`。
+- 模式使用 globset，显式设置 `literal_separator(false)`、`backslash_escape(false)`，保持 `*` 可跨 `/`、大小写敏感的整体路径匹配；规则加载时编译，非法模式作为规则错误报告。
+- `projects/*` 覆盖该目录下的普通文档，包括嵌套路径；`*decisions*` 匹配路径中包含 decisions 的文档。
+- 模式匹配不自动追加子树：`projects/*/decisions` 只匹配以 decisions 结尾的路径，要匹配其中的文档应写 `projects/*/decisions/*`。
+- filename_pattern 只匹配文件名，不匹配完整路径。
+
+迁移时删除自写 fnmatch，不模拟其全部边缘行为。现有常用 `*`、`?`、字符类规则保留对应匹配意图；非法模式由宽松处理改为规则错误，转义和字符类的边缘行为以 globset 为准。迁移测试覆盖现有规则样例及上述差异，不自动改写用户规则。[globset 配置](https://docs.rs/globset/latest/globset/struct.GlobBuilder.html)
 
 | 字段 | 必填 | 行为 |
 | --- | --- | --- |
-| `path` | 是 | 相对路径或 `fnmatch` 模式，如 `guides`、`projects/*` |
+| `path` | 是 | 相对目录或 globset 模式，如 `guides`、`projects/*` |
 | `description` | 否 | 该范围的用途说明 |
 | `types` | 否 | 该范围允许的文档类型 |
 | `required_fields` | 否 | 为匹配范围追加必填字段 |
@@ -115,14 +125,25 @@ sections:
 - 系统不再内置 `title`、`type`、`tags`、`created_at`、`updated_at` 等必填字段。
 - 根级和目录级必填字段会合并，重复字段只保留一次。
 - `Frontmatter` 的其他字段允许自由扩展。
-- 多条目录规则匹配时按 `path` 长度从短到长应用，更具体的规则最后生效。
+- 多条目录规则匹配时按 `path` 长度从短到长应用，等长保持声明顺序；required_fields 合并去重，类型与文件名约束按最后一条声明该约束的匹配规则生效。这里的具体性只是长度约定，不推断模式集合包含关系。
 - `filename_pattern` 只校验匹配目录下文档的文件名。
 - 标签建议使用小写规范形式，可用 `/` 表达层级，例如 `engineering/backend`。
 - `tag_aliases` 只提供归一建议，不限制新标签；别名和大小写变体会产生 warning。重复标签会在检索归一时视为同一标签，不单独提示。
-- `get_wiki_rules` 会返回当前配置、指引、动态 `known_tags` 和 `wiki_root`。
+- `get_wiki_rules` 返回有效规则、指引、动态 known_tags 和 wiki_root。规则缓存使用规则文件指纹，known_tags 随文档投影变化更新。
 - 首次出现且未配置别名的新标签产生 warning，但仍允许保存。
-- 所有问题都由 `validate_wiki` 返回；校验不会自动改写 Markdown。
+- 所有问题都由 `validate_wiki` 返回；默认不写文件，只有显式 fix_format=true 才修复格式，不修复规则或元数据问题。
 - 配置中的未知字段会被拒绝，避免拼写错误或无效规则被静默忽略。
+
+## 格式检查与修复（待实现）
+
+使用内置 dprint-plugin-markdown，取消旧 mdformat 等价承诺；不需要额外安装 Python、Node 或格式化命令。统一配置使用 LF、80 列目标宽度、保持原有段落换行（TextWrap::Maintain），其他 Markdown 风格使用锁定组件版本的默认值，不新增用户格式配置字段。[配置接口](https://docs.rs/dprint-plugin-markdown/latest/dprint_plugin_markdown/configuration/struct.ConfigurationBuilder.html)
+
+- 检查时在内存中格式化并比较原文，存在差异报告 markdown.formatting。
+- fix_format 默认 false；单文件修复指定 path，全库修复显式 full=true，两者互斥。未指定范围不能触发写回，参数详见 [MCP 契约](MCP_TOOLS.md)。
+- 修复保留 Frontmatter 原文和代码块内部，不修复标签、链接目标、关系或业务内容；规则文件不进入普通文档格式修复范围。
+- 原文无法安全解析时报告错误并跳过修复。写回前检查文件是否变化，冲突则跳过；同目录临时文件替换并保留权限，无变化不写回。
+- 修复后重新校验；formatted_paths 只列实际成功写回的路径，剩余规则问题继续返回，不以格式修复成功代替校验通过。
+- 原生工具仍负责内容修正，修正后再次校验；格式修复是唯一新增的文档编辑例外。
 
 ## 主要错误码
 
@@ -135,8 +156,11 @@ sections:
 | `tags.non_canonical` | warning | 标签是别名或大小写不规范，并给出规范标签建议 |
 | `tags.new` | warning | 标签首次出现且尚未配置为规范标签 |
 | `link.broken` | warning | 内部 Markdown 链接目标不存在 |
-| `markdown.formatting` | warning | 文档不符合 mdformat 规范 |
+| `markdown.formatting` | warning | 文档与内置 dprint 格式结果不同（待实现） |
 | `markdown.parse` | error | Markdown 或 YAML Frontmatter 无法解析 |
+| `rules.parse` | error | 规则配置或模式非法，无法应用规则 |
+| `format.conflict` | error | 格式写回前发现外部修改，已跳过该文件（待实现） |
+| `format.failed` | error | 格式化或安全写回失败（待实现） |
 
 ## 开发与验证
 

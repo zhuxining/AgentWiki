@@ -1,265 +1,188 @@
-# AgentWiki 架构
+# AgentWiki 架构与迁移方案
 
-本文描述 AgentWiki 的目标架构与设计取舍。实现按里程碑推进，各部分实际状态见第 1.2 节「实现状态」。
+## 1. 目标与当前状态
 
-## 1. 产品边界
+AgentWiki 是本地 Markdown Wiki 的检索与治理层，面向一万篇以内的个人或团队知识库。目标是少写、少维护通用代码，复用成熟组件，保持单 package 和嵌入式部署。
 
-### 1.1 职责范围
+Markdown 正文和 YAML Frontmatter 是事实源；LanceDB 与 SQLite 都是派生投影。Agent 原生工具负责已知路径读取、文档创建、编辑、移动与删除。AgentWiki 提供检索、规则、校验，以及显式请求的格式修复。
 
-AgentWiki 是本地 Markdown Wiki 的搜查与治理层。它负责：
+HTTP API、云同步、Web UI、查询 LLM、实体自动抽取和操作审计不在范围内。无需独立数据库或模型服务，允许依赖使用原生库。
 
-- 为 Agent 检索历史、约定、已有方案、关联内容和近期变化；
-- 使用 Tantivy 关键词、可选本地 embedding 和排名融合返回章节级证据；
-- 提供目录组织规则，并在原生文件修改后执行确定性校验；
-- 保持 SQLite 投影可删除、可增量同步和可全量重建。
+**本轮仅更新文档，以下组件、目录和行为是待迁移目标。** 当前实现按源码核对如下，不应以旧注释或接口名称推断功能完整：
 
-Agent 原生工具负责已知路径读取、创建、编辑、移动和删除。HTTP API、云同步、Web UI、
-查询 LLM 和操作审计不属于当前范围。图谱仅表示 Markdown 中明确声明的文档关系。
+| 部分 | 当前状态与差距 |
+| --- | --- |
+| CLI / 配置 | `src/cli.rs` 已有命令路由和配置加载；入口目前是同步函数，模型配置尚未用于推理 |
+| Markdown / 规则 / 校验 | 已有手写扫描、切分、规则合并和部分校验；未接入目标解析、切分、格式化组件 |
+| 同步 / SQLite / 图谱 | 已有同步流程和元数据表；扫描会读取全部文档，变化文档重复读取；移动计数恒为零，解析错误隔离、重试与关系解析仍需补齐 |
+| 检索 | `src/tantivy_svc.rs` 写入和查询为占位；`src/search.rs` 未实现完整排名融合和近期检索 |
+| MCP | `src/mcp.rs` 为提示信息占位，尚无可调用的三个工具 |
+| 语义 / 格式修复 | 未实现 |
 
-### 1.2 实现状态
+当前 Cargo 仍声明 Tantivy、lindera-tantivy、rust-mcp-sdk 等旧依赖。当前 Tantivy 0.26 的字段类型不包含旧设计假设的 `VecField`，后续不再按该假设接线。旧 Python 实现保留在 `legacy/python/`，不恢复维护。
 
-| 部分 | 状态 | 说明 |
+## 2. 组件与工程工具链
+
+| 职责 | 目标组件 | 自有代码边界 |
 | --- | --- | --- |
-| CLI（`agentwiki`：query / sync-index / rebuild-index / validate-wiki / show-config） | ✅ 已实现 | `src/cli.rs` |
-| 配置加载（`~/.agentwiki/config.json`，缺省自举；`validator` 校验 + 路径基准解析） | ✅ 已实现 | `src/config.rs`（仅 composition root 调用）；`embedding_model` 字段已就位，语义腿里程碑接线 |
-| Markdown 扫描、Frontmatter 解析、标题感知切块、路径安全 | ✅ 已实现 | `src/markdown.rs` |
-| 增量同步与 rebuild、文件指纹（content hash / mtime / size） | ✅ 已实现 | `src/sync.rs` |
-| SQLite 元数据存储（同步账本 / 图谱 / 状态） | ✅ 已实现 | `src/storage.rs` |
-| 一跳文档关系抽取 | ✅ 已实现 | `src/graph.rs` |
-| 格式、结构、Frontmatter 与内部链接校验 | ✅ 已实现 | `src/validate.rs` |
-| 规则文件完整解析与匹配（sections/type/filename_pattern/tag_aliases、fnmatch、error/warning 级别） | ✅ 已实现 | `src/rules.rs` 纯函数层（MCP `get_wiki_rules` 可复用）；`model::Rule` 按 RULES.md 契约全字段 |
-| 检索编排（融合、scope、关联文档、降级） | ✅ 已实现 | `src/search.rs`（候选读取依赖下方接线） |
-| Tantivy 全文接线（BM25 + `lindera` 中文分词） | 🔧 进行中 | `src/tantivy_svc.rs` 当前为占位实现（`search` 返回空、`semantic_available` 恒 `false`） |
-| MCP server（`get_wiki_context` / `get_wiki_rules` / `validate_wiki`） | 🔧 进行中 | `src/mcp.rs` 占位；SDK 在 `mcp` feature 之后 |
-| 语义向量腿（本地 embedding + 后台向量生命周期） | ⏳ 目标态 | 未实现，设计见第 2.4 节「语义向量腿（目标态）」 |
+| 全文 / 向量 / 混合 | LanceDB | 字段映射、查询约束、证据组织与降级 |
+| 元数据 | rusqlite，bundled | 同步账本、文档信息、关系、失败记录 |
+| 本地 embedding | FastEmbed | 输入构造、模型配置、缓存与错误处理 |
+| Markdown | pulldown-cmark | 标题、链接、源位置的领域映射 |
+| 章节切分 | text-splitter | 在标题章节内切分，保留章节路径 |
+| YAML | serde-saphyr + serde | 直接反序列化规则类型和 JSON 兼容元数据 |
+| 文件遍历 / glob | walkdir / globset | 安全路径与规则合并 |
+| 格式化 | dprint-plugin-markdown | 检查、显式修复、安全写回 |
+| CLI / MCP | clap / 官方 rmcp | 参数、协议、序列化；MCP SDK 由 mcp feature 隔离 |
+| 异步 / 日志 / 错误 | tokio / tracing / thiserror + anyhow | 生命周期与系统边界上下文 |
+| 路径 / 指纹 / 锁 | camino / sha2 / fs2 | UTF-8 路径、变更确认、跨进程写协调 |
 
-本文其余部分描述目标态设计；标注"目标态"的小节在对应里程碑落地前不构成当前行为承诺。
+LanceDB 承接 BM25、向量查询、过滤与 RRF；默认 ICU 分词，不自建中文分词适配器或通用融合算法。专业词和代码标识符效果通过固定语料验证，不能由组件支持推断召回质量。[FTS 配置](https://docs.rs/lancedb/latest/lancedb/index/scalar/struct.FtsIndexBuilder.html)、[RRF](https://docs.rs/lancedb/latest/lancedb/rerankers/rrf/struct.RRFReranker.html)
 
-## 2. 数据与检索
+FastEmbed 首个支持 `BAAI/bge-small-zh-v1.5`，适配其模型枚举和资源，不自行实现模型分词、池化或推理。关闭模型时不初始化推理资源；启用后按需准备本地缓存，准备完成后离线运行。[FastEmbed](https://docs.rs/fastembed/latest/fastembed/)
 
-### 2.1 事实源与规则入口
+Markdown 标题、标准链接和 Wiki 链接使用解析器事件，不自行用字符串扫描替代解析。超长章节交给切分器；保留章节面包屑、源位置及原文证据，不手写滑动窗口。[解析选项](https://docs.rs/pulldown-cmark/latest/pulldown_cmark/struct.Options.html)、[切分器](https://docs.rs/text-splitter/latest/text_splitter/)
 
-Markdown 正文和 YAML Frontmatter 是事实源。Wiki 根目录的 `AGENTWIKI.md` 是唯一的保留治理
-文件：Frontmatter 承载结构化规则，正文作为 `guide_content` 返回，该文件不进入普通索引。
-除此之外所有 `*.md` 都是普通文档。
+配置字段少时直接校验；移除 validator、watcher 和其他没有实际消费者的预留依赖。保留 Cargo、rustfmt、Clippy、Rust 测试和 tempfile；rstest、insta、criterion 仅在实际测试或基准需要时保留。不新增 ORM、任务编排框架、通用 Repository 或插件系统。
 
-运行时装配（`runtime::Runtime::assemble`）在启动时检查该文件：缺失则写入随包分发的默认
-模板（见 `markdown::DEFAULT_AGENTWIKI`，完整参考示例见 `docs/AGENTWIKI.md`），已存在则永不
-覆盖。因此新建 Wiki 立刻拥有可用规则，而手写规则不会在任何一次启动中被回退。该初始化是
-启动期唯一的写操作，不参与索引事务。
+edition 保持 2024，MSRV 保持 1.98。具体依赖版本及 feature 在源码迁移时按兼容性解析，交由 Cargo 更新锁文件；本轮不宣称新组件已通过本项目编译或性能验证。
 
-### 2.2 投影内容
+## 3. 目标目录与依赖
 
-索引保存：
-
-- 文档路径、标题、Frontmatter、真实 `mtime_ns` 和大小；
-- 文档稳定身份、内容 checksum、同步状态和失败原因；
-- 按 Markdown 标题层级切分的有界片段（单片段有字符上限，超长章节按段落拆分并保留少量
-  重叠）；
-- 片段级 Tantivy 全文投影和可选的向量腿；
-- 从内部链接和 `relations` Frontmatter 派生的一跳文档关系；
-- 用于变化检测的文件指纹（SHA-256 内容哈希 + `mtime_ns` + 大小）。
-
-### 2.3 图谱
-
-图谱不自动抽取实体。支持 `[[doc]]`、相对 Markdown 链接以及：
-
-```yaml
-relations:
-  - type: depends_on
-    target: architecture/retrieval.md
-```
-
-目标暂不存在的边保留为 `unresolved`，目标出现后在同步时解析；关联证据会保留关系来源章节
-和原文上下文，便于 Agent 回读。图谱是 SQLite 派生投影，不会成为 Markdown 正文的事实源；
-检索证据最多附带一跳关联文档。非法 `relations` 声明不阻断其他文档索引，但会进入 `degraded`
-诊断。
-
-### 2.4 语义向量腿（目标态）
-
-语义索引是可选的向量腿，按 chunk embedding hash、模型和维度校验。embedding hash 包含标题、
-标签、章节和正文：文档修改时，未改变语义输入的 chunk 直接复用旧向量，只有新增或改变的
-chunk 重新 embedding。模型变化会清理旧模型投影，并在下一次查询前重建；向量腿或 embedding
-不可用时保留关键词检索，并在检索结果中报告降级原因。
-
-文档的 Tantivy 和图谱投影先提交，向量 manifest 随后以 `pending` 状态提交，向量计算在后台
-完成后以当前文档 content hash 做栅栏，再原子替换为 `ready`；计算失败保留 `error` 状态，
-不会撤销 Markdown 或关键词索引。首次创建向量表时检索会等待这一轮初始任务，后续文档变更
-保持异步，语义候选只读取模型、hash 和状态均匹配的 ready 向量。进程关闭或异常退出遗留的
-`pending` 会在下次 runtime 启动时恢复为可重试状态，避免后台任务丢失后永久阻塞同步。
-
-**相似度阈值与模型绑定**：`min_similarity` 是语义命中的余弦下限，必须与该模型的实际分数
-分布一起标定重置，不能跨模型复用。此类标定在 Python 原型（`legacy/python`）中进行过：
-
-- 中文模型 `BAAI/bge-small-zh-v1.5`（512 维，约 90 MB）上标定的可用窗口只有约
-  **0.02**（最弱真实改写 0.4470，真正无关查询峰值 0.4281），远比多语言模型（改写
-  0.34–0.58 / 无关 0.10）脆弱；
-- 标定必须用索引**实际嵌入的文本格式**（`title\ntags\nsection\ncontent`），而不是
-  Markdown 原文——两者相似度相差约 0.01–0.02，在该窗口宽度下足以得出相反结论；
-- 有一类查询是单阈值分不开的：主题相邻但并非所需（原型测量中"如何用 Kubernetes 部署
-  微服务"对发布手册打 0.4965，高于最弱真实改写）。这类假阳性需要调用方结合
-  `match_sources`、`scope` 或读取原文收敛；
-- 阈值在全工程只能有一处定义并被 CLI / MCP 入口复用：直接构造查询的调用方（基准、测试）
-  必须和产品入口跑同一个默认值，避免两处默认值漂移。
-
-Rust 语义腿接入前，必须用 Rust 索引的实际嵌入文本重新完成上述标定，上述数值只作为方法
-参考，不作为常数沿用。
-
-### 2.5 增量确认与同步
-
-查询前执行增量确认，只解析变化文档并清理删除投影。流程：
-
-1. 收集 Wiki 下所有 Markdown 的路径、`mtime_ns`、大小，与账本中的指纹做**快速筛选**；
-2. 对疑似变化的文档读取并计算 SHA-256 内容哈希，确认是否真的变化（避免仅 mtime 抖动触发
-   全量重索引）；
-3. 唯一哈希配对的"删除 + 新增"会被保留文档稳定身份并识别为**移动**；
-4. 解析失败的文档保留已有有效投影，新文档则只报告失败（进 `sync_error` / 降级诊断，
-   不中止整轮）；
-5. 只对变化文档重写投影，未变化的直接跳过。
-
-rebuild 不得用执行时间覆盖文件修改时间——"最近活动"由此表示当前仍存在文档的真实修改
-时间，不是索引时间或审计历史。rebuild 与索引恢复场景才清空并全量重建投影；外部文档变更
-一律优先走增量路径。
-
-### 2.6 Schema 版本策略
-
-SQLite 仅是 Markdown 的镜像索引，不执行旧 schema 的逐列迁移。索引文件使用
-`PRAGMA user_version` 标记当前 schema；发现已有索引版本不匹配时，直接删除 SQLite、WAL 和
-SHM 文件并创建新 schema（Tantivy 目录同理），随后由增量同步从 Markdown 重新生成，原始
-文档不受影响。索引文件损坏或过期时必须支持从文档库重建。
-
-跨进程写锁使用文件锁（`fs2`），因为进程内锁不能阻止另一个 MCP 进程同时写入同一索引。
-
-### 2.7 检索与排名融合
-
-普通查询并发取得路径/标题、关键词和语义候选，再使用排名融合；同一文档最多返回两个片段。
-语义依赖不可用时降级为关键词查询，并在结果中说明原因。带近期意图的主题查询额外加入
-新近度排名，普通查询不受时间偏置。空查询（无自由文本）返回最近修改文档。
-
-候选查询在检索层完成 scope 与 `type`/`tags`/Frontmatter 过滤、按文档去重并施加 `LIMIT`：
-否则一篇章节很多的文档会占满整个候选池，使其他匹配文档无法进入融合阶段。
-
-任何单个检索源失败都只降低策略等级（`degraded` 记录原因），不会中止整次检索。
-
-### 2.8 关键词投影与中文分词
-
-关键词投影使用 Tantivy，中文等"不以空格分词"的书写系统经 `lindera` 分词后建立词元。
-相关文本分析下沉在 `tantivy_svc` 与 `markdown`，不扩散到业务层。
-
-## 3. 模块与依赖
+目录随对应功能迁移创建，不提前声明空模块：
 
 ```text
-CLI / MCP composition roots (src/cli.rs, src/mcp.rs)
-            ↓
-        runtime context (src/runtime.rs)
-            ↓
- search / validate / sync 编排
-            ↓
- model（纯领域） ← tantivy_svc / storage / markdown / graph（适配）
+src/
+├── lib.rs                 # 公共 API 与模块声明
+├── config.rs              # 配置加载、默认值、路径解析
+├── runtime.rs             # 唯一资源所有者与公共用例入口
+├── error.rs               # 统一错误类型
+├── bin/
+│   ├── agentwiki.rs       # CLI
+│   └── agentwiki-mcp.rs   # MCP，mcp feature
+├── document/
+│   ├── mod.rs             # Document、Chunk、读取入口
+│   ├── path.rs            # 受约束相对路径、安全检查、扫描
+│   ├── parse.rs           # Frontmatter、标题、链接、源位置
+│   └── chunk.rs           # 章节归属、切分器接线
+├── retrieval/
+│   ├── mod.rs             # 查询/结果类型、策略、证据组织
+│   ├── index.rs           # LanceDB 唯一边界
+│   └── embedding.rs       # FastEmbed 唯一边界
+├── governance/
+│   ├── mod.rs             # 规则获取、校验与修复入口
+│   ├── rules.rs           # 规则类型、解析、匹配、合并
+│   ├── validate.rs        # 问题类型与确定性检查
+│   └── format.rs          # dprint 接线与显式格式写回
+├── sync.rs                # 增量同步、重建、重试
+├── storage.rs             # SQLite 元数据
+└── graph.rs               # 一跳文档关系
+
+tests/
+├── retrieval.rs
+├── sync.rs
+├── governance.rs
+└── fixtures/
 ```
 
-- `model`：文档、检索结果、规则与校验的纯领域类型，**依赖无关**（不导入 Tantivy、rusqlite、
-  CLI/MCP SDK，也不触碰文件系统）；作为 `sync` / `search` / `validate` 之间及 MCP
-  序列化的共享契约；
-- `sync`：Markdown → 索引/元数据的增量投影与 rebuild；
-- `search`：任务检索策略、排名融合和 scope 过滤；
-- `validate`：格式、Frontmatter 与内部链接校验（只报告，不改写）；
-- `tantivy_svc`：检索引擎的**唯一边界**封装（写索引 / BM25 查询 / 可选向量腿），`sync` 与
-  `search` 只依赖它的小 API，从不直接依赖 Tantivy 类型；
-- `storage`：`rusqlite` 元数据存储（同步账本 / 图谱 / 状态），**不执行**全文或向量检索；
-- `markdown`：路径安全、只读扫描、Frontmatter 解析和标题感知切块；
-- `graph`：一跳文档关系抽取；
-- `runtime`：显式资源装配、同步锁、可选 watcher 和索引生命周期；
-- `config`：配置模型（`wiki_root` / `embedding_model`）的读取、`validator` 校验与路径归一化，
-  仅 composition root 调用；
-- `cli.rs`、`mcp.rs`：读取配置、协议适配、参数解析和结果序列化。
+单元测试留在模块内，公共跨模块行为放在 tests，固定小型 Markdown 文档放在 fixtures。文档继续使用现有 README、AGENTS 和 docs 文件，不新增平行设计入口。
 
-检索适配层经由明确边界使用，不直接创建 SQLite 连接或读取全局配置。composition root 统一
-读取用户配置目录的 `~/.agentwiki/config.json`（相对路径以该文件所在目录为基准，首次运行
-缺少文件时创建默认配置并初始化 Wiki 的 `AGENTWIKI.md`）；runtime factory 只接受已经解析的
-构造参数。运行配置不读取环境变量。
+```text
+CLI / MCP → Runtime
+              ├─ sync → document / graph / retrieval / storage
+              ├─ retrieval → LanceDB / FastEmbed，附加 SQLite 关系
+              └─ governance → document / rules / format
+```
 
-CLI 参数优先级：`--wiki-root` 显式参数 > 配置文件 > 默认值（`~/AgentWiki`）。派生投影
-（Tantivy 索引 `tantivy/` 与 SQLite 元数据 `agentwiki.sqlite3`）固定在配置目录
-`~/.agentwiki/`，不对外暴露配置。配置文件字段只有 `wiki_root` 与 `embedding_model`（后者
-可选，`null`/缺省关闭语义腿）；旧字段名 `document_root` 不再兼容，配置文件需迁移到
-`wiki_root`。
+- Runtime 统一持有 Wiki 根目录、索引、元数据连接、可选模型和同步协调资源；移除 SyncContext 的重复装配。
+- sync 接收明确资源引用；检索与治理不接收整个 Runtime，也不依赖同步上下文。
+- LanceDB/Arrow 类型只出现在 retrieval/index，FastEmbed 类型只出现在 embedding，SQLite 连接只出现在 storage。
+- 删除全局 model；Document、Chunk 属于 document，查询/结果属于 retrieval，规则/问题属于 governance，SyncReport 属于 sync。领域类型不依赖第三方 I/O 或协议 SDK。
+- lib 只导出实际调用者需要的公共 API，不全量公开内部模块或数据库行结构。
+- graph 复用解析出的链接和章节，validate 复用同一文档表示，不重复扫描或解析。
+- config 只在入口加载，业务模块接收已解析参数；同步文件 I/O、SQLite 和模型推理不阻塞 Tokio executor，阻塞任务需限制并发并等待完成。
 
-## 4. Agent 工作流
+## 4. 数据与运行行为
 
-1. 任务依赖 Wiki 知识、近期变化或未知位置时调用 `get_wiki_context`；
-2. 用 Agent 原生工具读取关键命中文档，不能只根据摘要下结论；
-3. 出现新实体、证据不足或矛盾时细化查询并再次检索；
-4. 新建、移动或首次修改陌生范围前调用 `get_wiki_rules`；
-5. 使用原生工具修改 Markdown；
-6. 调用 `validate_wiki(path=...)`，全库验收才使用 `full=true`。
+### 4.1 规则与配置
 
-已知准确路径且不依赖其他 Wiki 知识时，直接使用原生文件工具，不做无效检索。Agent 侧完整
-的使用指引由 Wiki 根目录的 `AGENTWIKI.md`（规则文件正文）承载，本文只描述交互次序。
+Wiki 根目录的 `AGENTWIKI.md` 是唯一组织规则入口：Frontmatter 是结构化规则，正文作为 guide_content 返回，不作为普通文档索引。Runtime 创建缺失模板，已存在文件不覆盖。模板自举与显式格式修复是应用写 Markdown 的两个限定场景。
 
-## 5. 可靠性
+配置继续使用 `~/.agentwiki/config.json`，仅保留 wiki_root 和 embedding_model。默认根目录 `~/AgentWiki`，模型默认 null；CLI 显式根目录优先于配置，配置相对路径以配置目录为基准。业务不读取环境变量配置，第三方缓存和模型路径尽量通过构造参数传递。
 
-- 文档变更不会因索引或 embedding 失败而被回滚；
-- 单篇解析失败不会阻断其他文档，失败路径进入检索降级信息；
-- embedding 失败不会破坏关键词投影；
-- 路径和 scope 必须留在 Wiki 根目录；外部符号链接不进入索引；
-- 校验只报告问题，不自动改写原生工具产生的 Markdown；
-- 必填字段完全由规则文件 `AGENTWIKI.md` 的 `required_fields`（含匹配的 `sections[].required_fields`）决定，系统不内置任何必填字段；规则可用可选 `tag_aliases` 归一同义标签，动态 `known_tags` 用于复用提示，新标签仅告警、不阻断，其他字段允许扩展；
-- `rusqlite` 元数据连接由 runtime 显式初始化并关闭；
-- 单文档索引失败（含元数据存储约束错误）会被记录到 `storage` 的 `sync_error` 并继续处理其余文档，不会中止整轮同步；
-- 同一连接上的写操作串行化在一把写锁之下：正确性依赖锁纪律，而不是驱动层的事务隔离。因此所有写路径必须持有该锁，读路径不与之并发交叉。
+目标数据布局：
 
-## 6. 检索设计思路与取舍
+```text
+~/.agentwiki/
+├── config.json
+├── models/                       # 本地模型缓存
+└── indexes/<wiki-root-hash>/      # 规范化绝对 Wiki 根目录的 SHA-256
+    ├── lancedb/
+    ├── agentwiki.sqlite3
+    └── sync.lock
+```
 
-本节记录检索方案背后的第一性原理与选型决策，是第 2 节的"设计意图"说明。
+先创建并规范化根目录，再确定隔离键。现有共享投影不直接复用，迁移后按根目录重新建立；旧投影清理由用户显式执行，不自动删除未知目录。Markdown 和规则内容无需迁移。
 
-### 6.1 匹配信号是正交的四个维度
+### 4.2 增量同步与恢复
 
-检索的本质是"以某种信号度量 Query 与片段的相似度"。信号可拆成四个正交维度，分别对待：
+1. 查询前收集相对路径、真实 mtime_ns 和大小，与账本筛选变化；失败文档也必须进入重试判断，不能被全局 generation 跳过。
+2. 疑似变化文档读取一次并计算内容哈希；内容相同只更新文件指纹，不重复解析和生成向量。
+3. 变化内容解析一次，供片段、元数据、关系和校验复用。解析失败保留该文档已有有效投影，记录路径和错误；不得将读取失败当成文件删除。
+4. 唯一内容哈希配对的删除与新增识别为移动，保留文档身份；有歧义则按增删处理。
+5. 更新关键词、文档信息和关系；向量按模型身份和实际输入哈希复用或同步批量计算。模型身份包含适配后的版本和维度，变更时旧向量失效。
+6. 元数据账本只有在相应投影成功后才确认。语义失败不撤销关键词投影，保留独立失败依据，下次同步重试。
 
-| 维度 | 度量方式 | 优点 | 短板 |
-|---|---|---|---|
-| **词法** | 倒排 + BM25 | 精确、可解释、对代码符/专名/ID 召回准确，是可靠的地基 | 同义改写搜不到；无空格中文需分词 |
-| **向量（语义）** | embedding 余弦/内积 | 泛化到"词不同但意思同" | 对精确 ID/代码符不敏感；需 ANN 索引与本地模型 |
-| **元数据过滤** | term/range（scope/tags/FM） | 精确、零模型、缩小候选集 | 只是过滤器，不是匹配器 |
-| **重排** | cross-encoder 精排 | 提升 precision | 需要额外模型推理，属可选锦上添花 |
+SQLite 不做全文或向量检索；LanceDB 与 SQLite 没有跨库事务。写操作由 fs2 跨进程锁协调，部分完成操作必须幂等重试。全局 generation 不能掩盖部分失败。查询不消费未确认的新旧混合状态；失败保留的旧证据必须附带诊断。
 
-### 6.2 为什么是"分层式混合"而不是单一信号
+不维护后台向量队列、watcher、pending 恢复或独立向量 manifest。首次和变更查询允许等待同步向量批处理；计算失败报告降级，进程退出后通过哈希与失败记录再次同步。
 
-对"给 Agent 提供 Markdown 上下文"这一目标，务实做法是**按需分层而非一步到位**：
+外部修改走增量路径，rebuild 和索引恢复才全量重建。投影格式不兼容时关闭资源、在锁内重建，不进行文档数据迁移。LanceDB 索引整理随批量同步或显式维护调用完成；未并入索引的数据仍须可查，不能为速度隐式返回过期结果。[索引更新机制](https://docs.lancedb.com/search/full-text-search)
 
-1. **词法腿（必做地基）**：Tantivy BM25 + `lindera` 中文分词 + scope/tags 过滤。零模型依赖、离线、快、可解释，覆盖"关键词/专名/精确路径"这类 Agent 查 Wiki 的主要诉求。
-2. **向量腿（可选叠加）**：弥补"词不同但意思同"的召回。**必须与词法混用**，不能单独用（免得精确项被漏掉）。
-3. **重排（不引入）**：本项目不含查询/生成 LLM，生成式 RAG 不在边界内；cross-encoder 重排暂不作为必选项。
-4. **融合算法**：RRF（倒数排名）或加权分数；候选**先按文档去重并施加 `LIMIT`**，防止单篇章节过多的文档占满融合候选池（机制见第 2.7 节「检索与排名融合」）。
+### 4.3 检索与证据
 
-顺序上先做词法、向量 feature 化后置，既把"纯 Rust、零 C 依赖、秒级冷启动"这个重写的主要收益立住，又把最大不确定性（本地 embedding 推理链）往后推。
+普通查询使用精确匹配、BM25 和可选语义检索；词法与语义混合交给 LanceDB RRF。应用只保留精确项优先、近期意图、文档片段限额及证据组织等产品策略，不建立通用排名框架。
 
-### 6.3 为什么选 Tantivy 而不是沿用 SQLite FTS5 + sqlite-vec
+候选查询尽早施加 scope、tags、note_types 和 metadata_filters，过滤数据不能直接拼接未经验证的查询表达式。限制每篇最多两个片段，并保证章节很多的单篇文档不会耗尽整个候选池；必要时有界补取候选。
 
-（结合 Rust 重写且不做一对一对数迁移的前提）Tantivy 的优势是本项目的决定性理由：
+空查询按真实文件修改时间返回近期文档；明确近期主题查询加入新近度，普通主题查询不施加时间偏置。limit 默认 10、范围 1..20，单条证据最多五条一跳关系，具体接口见 MCP 契约。
 
-- **纯 Rust、零 C 依赖**：绕开 sqlite-vec 在 Rust 侧 `load_extension` 的编译链风险；
-- **自带 BM25 与查询语法**：不再需要手工构造"三列投影 + 有序短语"这类 SQL 表达式；
-- **mmap 冷启动快**：适合本地 Wiki 的索引常驻；
-- **向量能力内嵌**（VecField），中小规模够用，不必另引专业向量库；
-- 版本 0.20+ 支持 schemaless JSON 字段，Frontmatter（tags/note_types）可直接作为过滤字段。
+关系仅从标准内部 Markdown 链接、Wiki 链接和 Frontmatter relations 派生，不自动抽取实体。保留方向、来源章节、原文上下文；目标缺失保留 unresolved，目标出现或删除时重新解析。越界目标拒绝并报告。
 
-由此，SQLite 在重写中**退化为纯元数据仓库**（同步账本 / 图谱 / 状态），不再执行全文或向量检索；检索全部收敛到 `tantivy_svc` 这一个边界。
+正常无匹配、主动关闭语义不是故障。启用模型但不可用、投影失败、关系声明非法等进入 degraded；实际命中来源进入 match_sources，rank_score 不代表概率或跨查询可比较的置信度。路径非法或请求不合法返回错误，不伪装为空结果。
 
-### 6.4 中文处理：从"三列投影"演进到"lindera 分词"
+语义阈值按模型和实际嵌入文本在固定语料中标定，包含标题、标签、章节和正文。不得沿用旧 Python 实验阈值，也不宣称单阈值能可靠分离主题相邻的无答案查询。
 
-Python 时代因 SQLite FTS5 `unicode61` 会把连续中文当作单个 token，采用
-`search_chars`（逐字）/`search_bigrams`（重叠二元组）/`search_words`（拉丁词元）三列 +
-有序短语的破解方案。Rust 版改用 Tantivy + `lindera` **真分词**，替代那套手工工程：
+### 4.4 校验与显式格式修复
 
-- 纯词元召回对代码符/专名稍弱；若 Wiki 多英文标识符，可启用"词元 + 子串 n-gram"双字段作为可选增强。
-- 中文文本分析下沉在 `tantivy_svc` / `markdown`，不扩散到业务层。
+规则合并、标签建议和格式定义以 RULES 为准，协议以 MCP_TOOLS 为准。默认只报告；fix_format=true 才允许改写请求范围内的格式，并在写回后重新校验。
 
-### 6.5 向量 / embedding 选型（可选 feature，默认后置）
+采用内置 dprint，保留 Frontmatter 原文和代码块内部，不修正标签、链接、标题语义或业务内容。无格式变化不写回，不触发无意义的修改时间变化。
 
-- **离线本地**是硬约束，只能选有开源权重、能在本地推理的模型。中文场景首选 `BAAI/bge-zh` 系列（如 `bge-small-zh-v1.5`，512 维，~90MB）；中英混合再评估多语言模型（如 `bge-m3` / `paraphrase-multilingual`）。
-- **推理链**：优先 `candle`（Hugging Face 官方 Rust 推理，纯 Rust、无 onnxruntime C 依赖）+ `tokenizers`；备选 `fastembed-rs`（若支持 bge 系列）。输出向量需 L2 归一化（单位向量上 `cos = 1 - L2²/2`）。
-- **向量存储**：用 Tantivy `VecField`（中小规模 flat + mmap 够用），不另引专业向量库；规模上万再评估 LanceDB。
-- **一致性**：向量按 `embedding hash + 模型 + 维度`校验；模型/维度变化时旧向量失效并重建（机制见第 2.4 节「语义向量腿（目标态）」）；带"近期意图"的查询额外加入新近度排名，普通查询不受时间偏置。
-- **降级**：embedding 或向量腿不可用时，检索降级为关键词查询并在结果中报告 `degraded` 原因，绝不中止。
+修复必须安全解析路径，拒绝跨根目录和外部符号链接；写回前核对原内容和文件指纹，变化则跳过并报告冲突。使用同目录临时文件替换，保留权限。此方式检测已观察到的并发修改，不宣称能锁住不配合的外部编辑器。
+
+单文件修复指定 path；全库修复显式 full=true，两者互斥。默认全库不格式化规则文件，防止自动改变组织指引；规则解析错误仍报告。格式修复后使用文件新状态，下一次查询按增量同步更新投影。
+
+## 5. 迁移映射与验收
+
+| 当前实现 | 目标迁移 |
+| --- | --- |
+| src/cli.rs、src/mcp.rs | bin 两个入口；Tokio 与官方 rmcp 接线 |
+| markdown.rs | document；现成解析、扫描、切分；统一读取结果 |
+| search.rs、tantivy_svc.rs | retrieval；LanceDB 替代旧检索占位，新增 FastEmbed 适配 |
+| rules.rs、validate.rs | governance；globset、dprint 与格式修复 |
+| model.rs | 类型按功能归属分散，删除集中模型文件 |
+| runtime.rs、sync.rs | 单一资源所有权、借用资源的同步编排 |
+| storage.rs、graph.rs | 保留 SQLite 与关系职责，删除独立向量 manifest，补齐失败和关系解析 |
+
+后续整体迁移还需更新 Cargo.toml/Cargo.lock、源码 rustdoc、源码内 DEFAULT_AGENTWIKI、CLI 帮助和测试；不能仅移动文件后保留旧算法与旧承诺。规则示例与代码内精简模板用途不同，默认模板不直接替换成完整示例。
+
+验收场景：
+
+- 中文专名、中英混合、代码标识符、精确路径、语义改写、过滤、近期及无答案查询；同时报告文档与章节召回，比较关键词和混合基线。
+- 增改删移、重复哈希移动歧义、mtime 抖动、未变化免解析、单篇解析失败、部分投影失败重试、模型切换与不可用、跨进程同步和损坏重建。
+- 默认校验不写文件；格式化幂等；Frontmatter、代码块和链接语义保持；冲突不覆盖，路径越界拒绝，修复后重新校验。
+- CLI/MCP 使用相同默认值和业务入口；核心库无需 mcp feature，MCP 入口单独编译验证。
+- 在固定语料记录构建、启动、增量同步、查询延迟、内存与召回。明确设备、模型、文档数和片段数，不承诺未经测量的性能。
+
+本轮文档验收只检查内容一致、链接、当前/目标标识及 git diff --check，不修改源码或依赖。代码迁移完成后执行 AGENTS 中的 Cargo 检查及相应 feature 测试。
