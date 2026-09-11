@@ -5,7 +5,7 @@
 //! - Anything that would make retrieval "degraded but usable" is surfaced as a
 //!   non-fatal diagnostic, not as a hard error.
 //!
-//! Application entry points (`main.rs`, `mcp.rs`) convert to `anyhow::Error`.
+//! Application entry points (`cli.rs`, `mcp.rs`) convert to `anyhow::Error`.
 
 use camino::Utf8PathBuf;
 

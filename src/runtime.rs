@@ -1,6 +1,6 @@
 //! Explicit resource assembly, index lifecycle and the application facade.
 //!
-//! `Runtime` is the composition root on which both the CLI (`main.rs`) and the
+//! `Runtime` is the composition root on which both the CLI (`cli.rs`) and the
 //! MCP server (`mcp.rs`) sit. It owns the wiki root plus a [`SyncContext`], and
 //! exposes the three operations the entry points need: sync, rebuild, and query
 //! (also validate). Generally library errors surface as [`crate::error::AgentWikiError`]

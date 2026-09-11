@@ -20,7 +20,7 @@ Agent 原生工具负责已知路径读取、创建、编辑、移动和删除�
 
 | 部分 | 状态 | 说明 |
 | --- | --- | --- |
-| CLI（`agentwiki`：query / sync-index / rebuild-index / validate-wiki / show-config） | ✅ 已实现 | `src/main.rs` |
+| CLI（`agentwiki`：query / sync-index / rebuild-index / validate-wiki / show-config） | ✅ 已实现 | `src/cli.rs` |
 | 配置加载（`~/.agentwiki/config.json`，缺省自举；`validator` 校验 + 路径基准解析） | ✅ 已实现 | `src/config.rs`（仅 composition root 调用）；`embedding_model` 字段已就位，语义腿里程碑接线 |
 | Markdown 扫描、Frontmatter 解析、标题感知切块、路径安全 | ✅ 已实现 | `src/markdown.rs` |
 | 增量同步与 rebuild、文件指纹（content hash / mtime / size） | ✅ 已实现 | `src/sync.rs` |
@@ -149,7 +149,7 @@ SHM 文件并创建新 schema（Tantivy 目录同理），随后由增量同步�
 ## 3. 模块与依赖
 
 ```text
-CLI / MCP composition roots (src/main.rs, src/mcp.rs)
+CLI / MCP composition roots (src/cli.rs, src/mcp.rs)
             ↓
         runtime context (src/runtime.rs)
             ↓
@@ -172,7 +172,7 @@ CLI / MCP composition roots (src/main.rs, src/mcp.rs)
 - `runtime`：显式资源装配、同步锁、可选 watcher 和索引生命周期；
 - `config`：配置模型（`wiki_root` / `embedding_model`）的读取、`validator` 校验与路径归一化，
   仅 composition root 调用；
-- `main.rs`、`mcp.rs`：读取配置、协议适配、参数解析和结果序列化。
+- `cli.rs`、`mcp.rs`：读取配置、协议适配、参数解析和结果序列化。
 
 检索适配层经由明确边界使用，不直接创建 SQLite 连接或读取全局配置。composition root 统一
 读取用户配置目录的 `~/.agentwiki/config.json`（相对路径以该文件所在目录为基准，首次运行

@@ -30,7 +30,7 @@ HTTP API、云端同步和 Web UI 不属于当前架构承诺。Python 原型已
 ```text
 src/
 ├── lib.rs               # 库根；声明模块、顶层 re-export，`forbid(unsafe_code)`
-├── main.rs              # CLI composition root（二进制 agentwiki）
+├── cli.rs               # CLI composition root（二进制 agentwiki）
 ├── mcp.rs               # MCP composition root（二进制 agentwiki-mcp，feature `mcp`；SDK 接线进行中）
 ├── error.rs             # 统一库错误类型（thiserror）
 ├── model.rs             # 纯领域类型（依赖无关的 value objects / query structs）
@@ -47,7 +47,7 @@ src/
 当前依赖方向必须保持为：
 
 ```text
-CLI / MCP composition roots (main.rs / mcp.rs)
+CLI / MCP composition roots (cli.rs / mcp.rs)
             ↓
         runtime context
             ↓
@@ -60,7 +60,7 @@ CLI / MCP composition roots (main.rs / mcp.rs)
 - `tantivy_svc` 是**唯一**触碰检索引擎的地方：`sync` 和 `search` 只依赖它的小 API，从不直接依赖 Tantivy 类型。
 - `storage` 只做元数据（账本 / 图谱 / 状态），**不执行** FTS5 或向量查询；全文/向量检索全部交给 Tantivy。
 - `markdown` 只读，从不写 Markdown；文档增删改由 Agent 原生工具完成。
-- `main.rs` / `mcp.rs` 只负责协议适配、参数解析、用例调用和序列化；只有 composition root 读取全局配置，其余模块通过构造参数接收依赖。
+- `cli.rs` / `mcp.rs` 只负责协议适配、参数解析、用例调用和序列化；只有 composition root 读取全局配置，其余模块通过构造参数接收依赖。
 - 越层导入（如业务层直接依赖 Tantivy 或 rusqlite 连接）属于架构破坏。
 
 各模块的详细职责、数据流、实现状态与设计取舍见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 第 2、3 节；上文是必须保持的开发约束，不是设计描述。
@@ -105,7 +105,7 @@ MCP 相关目标默认被 `mcp` feature 隐藏：`cargo build --all-features` �
 - 修改 `Cargo.toml` 后让 Cargo 重新解析并同步 `Cargo.lock`（`cargo build` 或 `cargo update -w`）。
 - 工具链跟随最新 stable；使用新语法、标准库 API 或依赖版本前，确认不会无意提高 MSRV（`package.rust-version` 当前为 `1.98`）。
 - 配置模型使用 `serde` 从用户配置目录 `~/.agentwiki/config.json` 读取并校验（`validator` 校验规则）；不读取环境变量，业务模块只接收已解析的构造参数。首次运行缺少配置文件时创建默认配置。
-- 错误处理：库错误用 `thiserror`（`error.rs`），应用入口（`main.rs` / `mcp.rs`）转成 `anyhow::Error` 收敛。
+- 错误处理：库错误用 `thiserror`（`error.rs`），应用入口（`cli.rs` / `mcp.rs`）转成 `anyhow::Error` 收敛。
 
 ### 需求与架构
 

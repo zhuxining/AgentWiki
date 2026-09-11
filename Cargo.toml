@@ -14,7 +14,7 @@ path = "src/lib.rs"
 
 [[bin]]
 name = "agentwiki"
-path = "src/main.rs"
+path = "src/cli.rs"
 
 [[bin]]
 name = "agentwiki-mcp"
