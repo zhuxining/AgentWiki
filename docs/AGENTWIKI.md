@@ -77,4 +77,4 @@ tag_aliases:
 - `projects/`：项目相关知识
 - `notes/`：一般知识和记录
 
-SQLite 仅是可重建的检索索引，Markdown 文件才是知识事实源。
+检索索引（Tantivy）与元数据存储（SQLite）都是可重建的派生数据，Markdown 文件才是知识事实源。

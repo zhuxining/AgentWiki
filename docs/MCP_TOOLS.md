@@ -21,7 +21,7 @@ metadata_filters: object | null
 ```
 
 - 空查询：最近修改文档；
-- 普通查询：精确匹配、FTS5 和可选语义混合检索；
+- 普通查询：精确匹配、关键词（Tantivy）和可选语义混合检索；
 - 近期主题查询：相关性与新近度融合；
 - `scope`：Wiki 相对目录或文档范围；
 - 不暴露 keyword/semantic/hybrid 模式选择和分页。

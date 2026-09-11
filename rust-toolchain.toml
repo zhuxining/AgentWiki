@@ -1,0 +1,7 @@
+# 项目统一工具链：跟随最新 stable，避免开发者机器间工具链漂移。
+# edition 2024 由此工具链提供；升级工具链前确认不会突破 MSRV 约束
+# （Cargo.toml 的 `rust-version` 与之保持一致）。
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

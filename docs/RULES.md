@@ -14,10 +14,9 @@ AgentWiki 使用 Wiki 根目录下的 `AGENTWIKI.md` 作为规则和指引文件
 `AGENTWIKI.md` 不会作为普通文档参与索引。索引是可删除、可重建的派生数据，Markdown 文档
 仍然是知识库的事实源。
 
-这是唯一的规则入口。**启动时会自动初始化**：CLI 与 MCP 在装配运行时（`create_runtime`）会
-检查 Wiki 根目录，若缺少 `AGENTWIKI.md` 就写入随包分发的默认模板
-（`src/agentwiki/data/default/AGENTWIKI.md`）。已存在的文件**永远不会被覆盖**，手改内容在后续
-每次启动都保留。
+这是唯一的规则入口。**启动时会自动初始化**：CLI 与 MCP 在装配运行时会检查 Wiki 根目录，
+若缺少 `AGENTWIKI.md` 就写入随包分发的默认模板。已存在的文件**永远不会被覆盖**，手改内容在
+后续每次启动都保留。
 
 默认模板声明 `required_fields: [title, type, tags]` 与 `default_type: note`，`sections` 与
 `tag_aliases` 以注释形式给出示例。对已有 Wiki，首次升级后这些必填字段才会开始生效，因此
@@ -139,12 +138,14 @@ sections:
 | `markdown.formatting` | warning | 文档不符合 mdformat 规范 |
 | `markdown.parse` | error | Markdown 或 YAML Frontmatter 无法解析 |
 
-## 开发与验收命令
+## 开发与验证命令
 
-所有门禁都收敛到 `Makefile`，CI 与本地执行同一批目标：
+提交前门禁收敛到 Cargo 自带命令，CI 与本地执行同一批目标：
 
 ```bash
-make check        # ruff + ty + pytest
-make test-unit    # 跳过标记为 integration 的测试
-make benchmark CORPUS=/path/to/wiki   # 中文检索基准
+cargo fmt --all -- --check     # 格式化检查
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace         # 单元 + 集成测试
+cargo build --features mcp --bin agentwiki-mcp   # MCP 入口可编译
+cargo bench                    # 检索基准（criterion）
 ```

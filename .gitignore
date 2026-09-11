@@ -1,20 +1,30 @@
+# ---------------------------------------------------------------------------
+# Rust build artifacts
+# ---------------------------------------------------------------------------
+/target/
+
+# Rust editor / tooling
+/.idea/
+*.iml
+
+# ---------------------------------------------------------------------------
+# Runtime data (never committed): local wiki index, SQLite, lock files
+# ---------------------------------------------------------------------------
+.agentwiki/**
+
+# ---------------------------------------------------------------------------
+# Python legacy (archived under legacy/python/ for reference)
+# ---------------------------------------------------------------------------
 __pycache__/
 *.py[cod]
 *.egg-info/
-.build/
-.dist/
 .pytest_cache/
 .ruff_cache/
 .venv/
-.DS_Store
-
-# coverage.py output
+htmlcov/
 .coverage
 .coverage.*
-htmlcov/
-
-# onnxruntime (transitively pulled in by fastembed) drops a session file in CWD
-:memory:.ses
 *.ses
 
-.agentwiki/**
+# macOS
+.DS_Store

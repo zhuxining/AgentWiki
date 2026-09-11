@@ -1,0 +1,89 @@
+[package]
+name = "agentwiki"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+description = "Local-first Markdown knowledge base context retrieval for AI agents"
+repository = "https://github.com/zhuxining/AgentWiki"
+keywords = ["markdown", "wiki", "retrieval", "search", "mcp"]
+categories = ["command-line-utilities"]
+
+[lib]
+name = "agentwiki"
+path = "src/lib.rs"
+
+[[bin]]
+name = "agentwiki"
+path = "src/main.rs"
+
+[[bin]]
+name = "agentwiki-mcp"
+path = "src/mcp.rs"
+
+# ---------------------------------------------------------------------------
+# Core runtime, config, error handling
+# ---------------------------------------------------------------------------
+[dependencies]
+tokio = { version = "1", features = [
+    "rt-multi-thread",
+    "macros",
+    "sync",
+    "fs",
+    "time",
+    "signal",
+] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+validator = { version = "0.20", features = ["derive"] }
+thiserror = "2"
+anyhow = "1"
+camino = { version = "1", features = ["serde1"] }
+dirs = "6"
+path-absolutize = "3"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# ---------------------------------------------------------------------------
+# Data & IO
+# ---------------------------------------------------------------------------
+sha2 = "0.10"
+hex = "0.4"
+pulldown-cmark = "0.12"
+rusqlite = { version = "0.40", features = ["bundled"] }
+notify = "8"
+notify-debouncer-full = "0.6"
+fs2 = "0.4"
+time = { version = "0.3", features = ["formatting"] }
+
+# ---------------------------------------------------------------------------
+# Retrieval (Tantivy search engine + Chinese tokenizer)
+# ---------------------------------------------------------------------------
+tantivy = "0.26"
+lindera-tantivy = "5"
+
+# ---------------------------------------------------------------------------
+# CLI / MCP entry points
+# ---------------------------------------------------------------------------
+clap = { version = "4", features = ["derive", "env"] }
+clap-verbosity-flag = "3"
+
+# MCP server SDK — kept behind the `mcp` feature so the core library stays
+# SDK-free and the ecosystem churn does not block the rest of the workspace.
+rust-mcp-sdk = { version = "2", optional = true }
+tower = { version = "0.5", optional = true }
+async-trait = { version = "0.1", optional = true }
+
+[features]
+default = []
+mcp = ["dep:rust-mcp-sdk", "dep:tower", "dep:async-trait"]
+
+[dev-dependencies]
+tempfile = "3"
+rstest = "0.23"
+insta = { version = "1", features = ["yaml"] }
+criterion = "0.6"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
