@@ -4,11 +4,10 @@
 //! and routes subcommands: query, sync-index, rebuild-index, validate-wiki.
 //! Only this root reads global config; library modules receive parsed values.
 
-use std::path::PathBuf;
-
 use camino::Utf8PathBuf;
 use clap::{Parser, Subcommand};
 
+use agentwiki::config::AppConfig;
 use agentwiki::model::ContextQuery;
 
 /// Subcommand routing.
@@ -19,17 +18,9 @@ use agentwiki::model::ContextQuery;
     about = "Local-first Markdown knowledge base context retrieval"
 )]
 struct Cli {
-    /// Skip config file and require explicit --wiki-root / --index-dir.
-    #[arg(long, default_value_t = false)]
-    no_config: bool,
-
-    /// Wiki root directory (overrides config `document_root`).
+    /// Wiki root directory (overrides config `wiki_root`).
     #[arg(long)]
     wiki_root: Option<Utf8PathBuf>,
-
-    /// Directory holding the derived index + metadata store (overrides config).
-    #[arg(long)]
-    index_dir: Option<Utf8PathBuf>,
 
     #[command(subcommand)]
     command: Command,
@@ -73,30 +64,18 @@ fn main() {
 fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    // Resolve wiki root + index dir: CLI flags win, then config file, then
-    // defaults (document_root = ~/AgentWiki, index at ~/.agentwiki).
-    let (root, index_dir) = if cli.no_config {
-        (
-            required(&cli.wiki_root, "--wiki-root")?,
-            required(&cli.index_dir, "--index-dir")?,
-        )
-    } else {
-        let cfg = Config::load()?;
-        let root = cli.wiki_root.clone().unwrap_or(cfg.document_root);
-        let index = cli.index_dir.clone().unwrap_or(cfg.index_path);
-        (root, index)
-    };
+    let cfg = AppConfig::load()?;
+    let root = cli.wiki_root.clone().unwrap_or(cfg.wiki_root.clone());
 
     if matches!(cli.command, Command::ShowConfig) {
-        println!("wiki_root = {root}");
-        println!("index_dir = {index_dir}");
+        print_config(&cli, &cfg, &root);
         return Ok(());
     }
 
     // Ensure the wiki root exists before assembly (runtime seeds AGENTWIKI.md).
     std::fs::create_dir_all(&root).map_err(|e| anyhow::anyhow!("create root {root}: {e}"))?;
 
-    let mut rt = agentwiki::Runtime::assemble(&root, &index_dir)?;
+    let mut rt = agentwiki::Runtime::assemble(&root, &cfg.projection_dir)?;
 
     match cli.command {
         Command::Query {
@@ -162,6 +141,31 @@ fn run() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Print the resolved configuration, annotating where each value came from.
+fn print_config(cli: &Cli, cfg: &AppConfig, root: &Utf8PathBuf) {
+    let config_file = cfg
+        .config_file
+        .as_deref()
+        .map(|p| p.as_str().to_owned())
+        .unwrap_or_else(|| "(none — created default)".to_owned());
+    println!("config_file = {config_file}");
+    println!(
+        "wiki_root = {root} ({})",
+        if cli.wiki_root.is_some() {
+            "cli"
+        } else if cfg.config_file.is_some() {
+            "config"
+        } else {
+            "default"
+        }
+    );
+    match &cfg.embedding_model {
+        Some(model) => println!("embedding_model = {model}"),
+        None => println!("embedding_model = null (semantic leg off)"),
+    }
+    println!("projection_dir = {}", cfg.projection_dir);
+}
+
 /// First N chars of content for a one-line console snippet.
 fn snippet(content: &str) -> String {
     let compact = content.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -188,69 +192,5 @@ fn print_report(r: &agentwiki::model::SyncReport) {
     );
     for d in &r.degraded {
         println!("  degraded: {d}");
-    }
-}
-
-fn required<T: Clone>(v: &Option<T>, flag: &str) -> anyhow::Result<T> {
-    v.clone()
-        .ok_or_else(|| anyhow::anyhow!("{flag} is required when --no-config is set"))
-}
-
-// ---------------------------------------------------------------------------
-// Config (composition-root only)
-// ---------------------------------------------------------------------------
-
-/// User configuration loaded from `~/.agentwiki/config.json`.
-#[derive(Debug, Clone, serde::Deserialize)]
-struct Config {
-    #[serde(default = "default_root")]
-    document_root: Utf8PathBuf,
-    #[serde(default = "default_index")]
-    index_path: Utf8PathBuf,
-}
-
-fn default_root() -> Utf8PathBuf {
-    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    Utf8PathBuf::from_path_buf(home.join("AgentWiki"))
-        .unwrap_or_else(|_| Utf8PathBuf::from("AgentWiki"))
-}
-
-fn default_index() -> Utf8PathBuf {
-    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    Utf8PathBuf::from_path_buf(home.join(".agentwiki"))
-        .unwrap_or_else(|_| Utf8PathBuf::from(".agentwiki"))
-}
-
-impl Config {
-    /// Load config, creating a default file on first run (never fails hard on
-    /// an absent file — falls back to defaults and writes a seed).
-    fn load() -> anyhow::Result<Config> {
-        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-        let dir = home.join(".agentwiki");
-        let path = dir.join("config.json");
-
-        if !path.exists() {
-            let cfg = Config {
-                document_root: default_root(),
-                index_path: default_index(),
-            };
-            std::fs::create_dir_all(&dir)?;
-            std::fs::write(&path, serde_json::to_string_pretty(&cfg)?)?;
-            return Ok(cfg);
-        }
-
-        let raw = std::fs::read_to_string(&path)?;
-        let cfg: Config = serde_json::from_str(&raw)?;
-        Ok(cfg)
-    }
-}
-
-impl serde::Serialize for Config {
-    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        use serde::ser::SerializeStruct;
-        let mut st = s.serialize_struct("Config", 2)?;
-        st.serialize_field("document_root", self.document_root.as_str())?;
-        st.serialize_field("index_path", self.index_path.as_str())?;
-        st.end()
     }
 }

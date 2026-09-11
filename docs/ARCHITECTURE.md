@@ -21,7 +21,7 @@ Agent 原生工具负责已知路径读取、创建、编辑、移动和删除�
 | 部分 | 状态 | 说明 |
 | --- | --- | --- |
 | CLI（`agentwiki`：query / sync-index / rebuild-index / validate-wiki / show-config） | ✅ 已实现 | `src/main.rs` |
-| 配置加载（`~/.agentwiki/config.json`，缺省自举） | ✅ 已实现 | `src/main.rs`（composition root 独占）；`validator` 校验与相对路径基准解析待接线 |
+| 配置加载（`~/.agentwiki/config.json`，缺省自举；`validator` 校验 + 路径基准解析） | ✅ 已实现 | `src/config.rs`（仅 composition root 调用）；`embedding_model` 字段已就位，语义腿里程碑接线 |
 | Markdown 扫描、Frontmatter 解析、标题感知切块、路径安全 | ✅ 已实现 | `src/markdown.rs` |
 | 增量同步与 rebuild、文件指纹（content hash / mtime / size） | ✅ 已实现 | `src/sync.rs` |
 | SQLite 元数据存储（同步账本 / 图谱 / 状态） | ✅ 已实现 | `src/storage.rs` |
@@ -169,6 +169,8 @@ CLI / MCP composition roots (src/main.rs, src/mcp.rs)
 - `markdown`：路径安全、只读扫描、Frontmatter 解析和标题感知切块；
 - `graph`：一跳文档关系抽取；
 - `runtime`：显式资源装配、同步锁、可选 watcher 和索引生命周期；
+- `config`：配置模型（`wiki_root` / `embedding_model`）的读取、`validator` 校验与路径归一化，
+  仅 composition root 调用；
 - `main.rs`、`mcp.rs`：读取配置、协议适配、参数解析和结果序列化。
 
 检索适配层经由明确边界使用，不直接创建 SQLite 连接或读取全局配置。composition root 统一
@@ -176,8 +178,11 @@ CLI / MCP composition roots (src/main.rs, src/mcp.rs)
 缺少文件时创建默认配置并初始化 Wiki 的 `AGENTWIKI.md`）；runtime factory 只接受已经解析的
 构造参数。运行配置不读取环境变量。
 
-CLI 参数优先级：`--wiki-root` / `--index-dir` 显式参数 > 配置文件 > 默认值
-（`~/AgentWiki` / `~/.agentwiki`）；`--no-config` 关闭配置文件，此时两个路径必须显式给出。
+CLI 参数优先级：`--wiki-root` 显式参数 > 配置文件 > 默认值（`~/AgentWiki`）。派生投影
+（Tantivy 索引 `tantivy/` 与 SQLite 元数据 `agentwiki.sqlite3`）固定在配置目录
+`~/.agentwiki/`，不对外暴露配置。配置文件字段只有 `wiki_root` 与 `embedding_model`（后者
+可选，`null`/缺省关闭语义腿）；旧字段名 `document_root` 不再兼容，配置文件需迁移到
+`wiki_root`。
 
 ## 4. Agent 工作流
 

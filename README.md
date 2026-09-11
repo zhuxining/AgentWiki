@@ -70,15 +70,22 @@ cargo run --bin agentwiki-mcp --features mcp
 ```
 
 配置统一放在用户配置目录 `~/.agentwiki/config.json`，首次运行缺少文件时自动创建默认配置；
-进程环境变量不参与配置。CLI 可用 `--no-config` 关闭配置文件，改用 `--wiki-root` 与
-`--index-dir` 显式指定（默认文档根目录是 `~/AgentWiki`，索引目录是 `~/.agentwiki`）：
+进程环境变量不参与配置。配置文件只有两个字段：
 
 ```json
 {
-  "document_root": "~/AgentWiki",
-  "index_path": "~/.agentwiki/index.sqlite3"
+  "wiki_root": "~/AgentWiki",
+  "embedding_model": null
 }
 ```
+
+- `wiki_root`：Wiki 文档根目录（事实源）。`~` 前缀展开为用户主目录，相对路径以配置文件
+  所在目录为基准；
+- `embedding_model`：可选语义模型标识；`null`/缺省表示关闭语义腿（语义检索随后续里程碑
+  接入）。未知字段会被忽略，便于向后兼容。
+
+派生投影（Tantivy 索引与 SQLite 元数据）固定在配置目录 `~/.agentwiki/` 下，无需配置；
+`--wiki-root` CLI 参数可以覆盖配置文件中的 `wiki_root`。
 
 ## 实现状态
 
