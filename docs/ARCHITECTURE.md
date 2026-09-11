@@ -27,6 +27,7 @@ Agent 原生工具负责已知路径读取、创建、编辑、移动和删除�
 | SQLite 元数据存储（同步账本 / 图谱 / 状态） | ✅ 已实现 | `src/storage.rs` |
 | 一跳文档关系抽取 | ✅ 已实现 | `src/graph.rs` |
 | 格式、结构、Frontmatter 与内部链接校验 | ✅ 已实现 | `src/validate.rs` |
+| 规则文件完整解析与匹配（sections/type/filename_pattern/tag_aliases、fnmatch、error/warning 级别） | ✅ 已实现 | `src/rules.rs` 纯函数层（MCP `get_wiki_rules` 可复用）；`model::Rule` 按 RULES.md 契约全字段 |
 | 检索编排（融合、scope、关联文档、降级） | ✅ 已实现 | `src/search.rs`（候选读取依赖下方接线） |
 | Tantivy 全文接线（BM25 + `lindera` 中文分词） | 🔧 进行中 | `src/tantivy_svc.rs` 当前为占位实现（`search` 返回空、`semantic_available` 恒 `false`） |
 | MCP server（`get_wiki_context` / `get_wiki_rules` / `validate_wiki`） | 🔧 进行中 | `src/mcp.rs` 占位；SDK 在 `mcp` feature 之后 |

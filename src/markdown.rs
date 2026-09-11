@@ -154,7 +154,12 @@ fn to_json(v: &serde_yaml::Value) -> Option<serde_json::Value> {
 /// - a document with no content still yields one (empty) slice so it stays
 ///   addressable;
 /// - oversized sections are split by paragraph with a small overlap.
+///
+/// `title` is reserved for the future semantic leg (ARCHITECTURE §2.4);
+/// current hashing covers section + content only.
 pub fn chunk_document(title: &str, body: &str, path: &PathScope) -> Vec<Slice> {
+    // Reserved for the semantic leg (see doc comment above).
+    let _ = title;
     let mut sections: Vec<(String, String)> = Vec::new();
     let mut headings: Vec<String> = Vec::new();
     let mut content_lines: Vec<&str> = Vec::new();
@@ -199,10 +204,6 @@ pub fn chunk_document(title: &str, body: &str, path: &PathScope) -> Vec<Slice> {
         return slices;
     }
 
-    let tags: Vec<String> = Vec::new();
-    // `tags` is filled by the caller via `Document.frontmatter`; kept simple here.
-    let _ = tags;
-
     for (section, content) in sections {
         for fragment in split_oversized(&content) {
             let source = format!("{section}\n{fragment}").trim().to_string();
@@ -210,9 +211,6 @@ pub fn chunk_document(title: &str, body: &str, path: &PathScope) -> Vec<Slice> {
                 format!("{}\u{0}{}\u{0}{}", path.0, ordinal, source).as_bytes(),
             ));
             let source_hash = hex::encode(Sha256::digest(source.as_bytes()));
-            let _ = (title, &tags);
-            // embedding_hash includes title/tags/source; computed where the
-            // semantic leg needs it (see tantivy_svc::embedding_hash).
             slices.push(Slice {
                 path: path.clone(),
                 chunk_id,
@@ -476,5 +474,81 @@ mod tests {
         assert_eq!(slices[0].section, "Title");
         assert!(slices[0].content.contains("intro"));
         assert_eq!(slices[1].section, "Title / Sub");
+    }
+
+    #[test]
+    fn frontmatter_plain_document() {
+        let (fm, body) = parse_frontmatter("# Only body\n");
+        assert!(fm.is_empty());
+        assert!(body.starts_with("# Only body"));
+    }
+
+    #[test]
+    fn frontmatter_bom_prefix() {
+        let raw = "\u{feff}---\ntitle: T\n---\nbody\n";
+        let (fm, body) = parse_frontmatter(raw);
+        assert_eq!(fm.get("title").and_then(|v| v.as_str()), Some("T"));
+        assert_eq!(body.trim(), "body");
+    }
+
+    #[test]
+    fn frontmatter_crlf_line_endings() {
+        let raw = "---\r\ntitle: T\r\ntags: [a, b]\r\n---\r\nbody\r\n";
+        let (fm, body) = parse_frontmatter(raw);
+        assert_eq!(fm.get("title").and_then(|v| v.as_str()), Some("T"));
+        let tags: Vec<&str> = fm
+            .get("tags")
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+            .unwrap_or_default();
+        assert_eq!(tags, vec!["a", "b"]);
+        assert_eq!(body.trim(), "body");
+    }
+
+    #[test]
+    fn frontmatter_unterminated_header_is_lossy() {
+        // Open fence without a closing one: empty map, raw text as body so the
+        // file stays readable and validate can flag `markdown.parse`.
+        let raw = "---\ntitle: T\n";
+        let (fm, body) = parse_frontmatter(raw);
+        assert!(fm.is_empty());
+        assert_eq!(body, raw);
+    }
+
+    #[test]
+    fn frontmatter_scalar_header_is_lossy() {
+        // A header whose YAML is not a map (scalar) must not panic and yields
+        // an empty map with the raw text as body.
+        let raw = "---\n42\n---\nbody\n";
+        let (fm, body) = parse_frontmatter(raw);
+        assert!(fm.is_empty());
+        assert!(body.contains("body"));
+    }
+
+    #[test]
+    fn frontmatter_nested_values() {
+        let raw =
+            "---\nrel:\n  - type: depends_on\n    target: x.md\ncount: 2\nok: true\n---\nbody\n";
+        let (fm, _) = parse_frontmatter(raw);
+        let rel = fm.get("rel").and_then(|v| v.as_array()).unwrap();
+        assert_eq!(rel[0].get("target").and_then(|v| v.as_str()), Some("x.md"));
+        // Numbers travel as f64 through `to_json`; assert on the float view.
+        assert_eq!(fm.get("count").and_then(|v| v.as_f64()), Some(2.0));
+        assert_eq!(fm.get("ok").and_then(|v| v.as_bool()), Some(true));
+    }
+
+    #[test]
+    fn snapshot_excludes_hidden_dirs_and_agentwiki() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = Utf8PathBuf::from_path_buf(dir.path().to_path_buf()).unwrap();
+        std::fs::create_dir_all(root.join(".obsidian/plugins")).unwrap();
+        std::fs::create_dir_all(root.join("notes")).unwrap();
+        std::fs::write(root.join("AGENTWIKI.md"), "---\n---").unwrap();
+        std::fs::write(root.join("a.md"), "# a").unwrap();
+        std::fs::write(root.join("notes/b.md"), "# b").unwrap();
+        std::fs::write(root.join(".obsidian/plugins/c.md"), "# c").unwrap();
+        let paths = snapshot(&root).unwrap();
+        let strs: Vec<String> = paths.iter().map(|p| p.0.to_string()).collect();
+        assert_eq!(strs, vec!["a.md", "notes/b.md"]);
     }
 }

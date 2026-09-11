@@ -79,23 +79,87 @@ pub enum EdgeStatus {
 
 /// Governance rules carried by the reserved `AGENTWIKI.md`.
 ///
-/// The system defines **no built-in required fields** — everything follows the
-/// rule file. Extra fields are allowed.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// No built-in required fields — everything follows the rule file. Unknown
+/// fields are rejected (`deny_unknown_fields`) while document frontmatter
+/// stays freely extensible. Contract defaults per RULES.md:
+/// `version=1`, `name="AgentWiki"`, `default_type="note"`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Rule {
+    /// Rule schema version; must be >= 1 (enforced by `rules::parse_rules`).
+    #[serde(default = "default_version")]
+    pub version: i32,
+    /// Wiki display name.
+    #[serde(default = "default_name")]
+    pub name: String,
+    /// Wiki purpose, returned to agents as organisational background.
+    #[serde(default)]
+    pub purpose: String,
+    /// Default type used when a document declares no `type`.
+    #[serde(default = "default_doc_type")]
+    pub default_type: String,
     /// Path-relative rules apply within; `None` means the whole wiki.
+    #[serde(default)]
     pub scope: Option<String>,
+    /// Root-level required fields.
+    #[serde(default)]
     pub required_fields: Vec<String>,
-    /// Maps synonymous tags onto a canonical tag.
-    pub tag_aliases: std::collections::BTreeMap<String, String>,
-    /// Per-section extension of `required_fields`.
+    /// Maps a canonical tag onto its alias list, for tag normalisation.
+    #[serde(default)]
+    pub tag_aliases: std::collections::BTreeMap<String, Vec<String>>,
+    /// Per-directory/per-pattern extension of `required_fields` and types.
+    #[serde(default)]
     pub sections: Vec<RuleSection>,
 }
 
+fn default_version() -> i32 {
+    1
+}
+
+fn default_name() -> String {
+    "AgentWiki".to_string()
+}
+
+fn default_doc_type() -> String {
+    "note".to_string()
+}
+
+/// One directory rule: `path` matches a wiki-relative directory (and all its
+/// descendants) or an fnmatch pattern whose `*` matches `/`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RuleSection {
-    pub match_path: String,
+    /// Directory or fnmatch pattern, e.g. `guides`, `projects/*`.
+    pub path: String,
+    /// Human-readable purpose of this scope.
+    #[serde(default)]
+    pub description: String,
+    /// Allowed document types within this scope (empty = unrestricted).
+    #[serde(default)]
+    pub types: Vec<String>,
+    /// Extra required fields appended for matching documents.
+    #[serde(default)]
     pub required_fields: Vec<String>,
+    /// File-name fnmatch pattern; a mismatch is a `path.filename` issue.
+    #[serde(default)]
+    pub filename_pattern: Option<String>,
+}
+
+/// Root rules merged with every section matching one wiki-relative path.
+///
+/// Shared contract between `validate` (today) and the MCP `get_wiki_rules`
+/// tool (later); built by `rules::effective_rules`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct EffectiveRules {
+    /// Root `default_type` (or contract default `note`).
+    pub default_type: String,
+    /// Root plus every matching section's required fields, deduplicated with
+    /// more specific sections applied last.
+    pub required_fields: Vec<String>,
+    /// Root `tag_aliases`, canonical tag -> alias list.
+    pub tag_aliases: std::collections::BTreeMap<String, Vec<String>>,
+    /// Matching sections in ascending `path` length (most specific last).
+    pub sections: Vec<RuleSection>,
 }
 
 /// A single ranked retrieval hit for one slice.
@@ -163,5 +227,33 @@ impl ContextQuery {
     /// True when this query carries only filters and no free text.
     pub fn is_recent_request(&self) -> bool {
         self.query.trim().is_empty()
+    }
+}
+
+/// Severity of a validation finding (`validate` output contract).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Severity {
+    Error,
+    Warning,
+}
+
+/// A single validation finding produced by `validate::validate_wiki`.
+/// `kind` is a stable machine string, `severity` error vs advisory.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Issue {
+    /// Wiki-relative document path.
+    pub path: String,
+    /// Stable machine kind, e.g. `frontmatter.required`, `link.broken`, `markdown.parse`.
+    pub kind: String,
+    /// Human-readable explanation.
+    pub message: String,
+    /// `Error` blocks conformance; `Warning` is advisory (e.g. tag suggestions).
+    pub severity: Severity,
+}
+
+impl std::fmt::Display for Issue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.message)
     }
 }

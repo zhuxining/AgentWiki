@@ -132,7 +132,11 @@ fn run() -> anyhow::Result<()> {
                 println!("no issues");
             } else {
                 for i in issues {
-                    println!("{}:{} {i}", i.kind, i.path);
+                    let level = match i.severity {
+                        agentwiki::model::Severity::Error => "ERROR",
+                        agentwiki::model::Severity::Warning => "WARNING",
+                    };
+                    println!("{level} {}:{} {i}", i.kind, i.path);
                 }
             }
         }

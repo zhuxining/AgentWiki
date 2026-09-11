@@ -20,6 +20,7 @@ pub mod error;
 pub mod graph;
 pub mod markdown;
 pub mod model;
+pub mod rules;
 pub mod runtime;
 pub mod search;
 pub mod storage;

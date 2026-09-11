@@ -60,7 +60,7 @@ impl Runtime {
     pub fn validate(
         &self,
         scope: Option<&crate::model::PathScope>,
-    ) -> Result<Vec<crate::validate::Issue>> {
+    ) -> Result<Vec<crate::model::Issue>> {
         crate::validate::validate_wiki(&self.root, scope)
     }
 }
