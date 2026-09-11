@@ -136,7 +136,8 @@ MCP 相关目标默认被 `mcp` feature 隐藏：`cargo build --all-features` �
 
 - 保持模块和函数单一职责，避免把配置、协议适配、业务编排和文件读写混在一起。
 - 遵循 `src/lib.rs` 的 `#![forbid(unsafe_code)]`；如需 unsafe 必须先在 Cargo.toml 层讨论并评估，不在模块内局部放水。
-- 公开函数、业务函数和边界适配函数必须写 rustdoc，按适用情况记录 `# Errors` / `# Panics`；测试 fixture 与测试辅助函数可保留合理例外。
+- 代码应自解释，注释只保留关键信息（不变量、边界语义、非显而易见的取舍），不要逐行逐函数堆注释。
+- 需要暴露契约的公开函数写简洁 rustdoc，按适用情况记录 `# Errors` / `# Panics`；测试 fixture 与测试辅助函数不要求注释。
 - 用类型系统表达约束：enum 表达互斥状态、newtype 封装不变量，避免用无约束 `Any`/宽类型掩盖接口问题。
 - 不要为消除统一错误类型而拼字符串丢失错误链；跨层失败用 `thiserror` 变体保留 source。
 - AI 生成的代码同样必须遵守本文件和项目架构文档。
@@ -201,8 +202,7 @@ Commit 遵循 Conventional Commits：`feat`、`fix`、`refactor`、`docs`、`tes
 
 ### 公开 API
 
-- 公开 API 使用 rustdoc 说明用途和契约
-- 按适用情况记录 `# Errors`、`# Panics` 和 `# Safety`
+- 公开 API 按需用简洁 rustdoc 说明用途和契约，按适用情况记录 `# Errors`、`# Panics` 和 `# Safety`；不为注释而注释
 - 文档示例适合编译运行时优先使用 doctest
 - 谨慎暴露依赖 crate 的具体类型（如不把 Tantivy 类型泄漏到 `search` / 业务 API），避免将内部依赖变成公共 API
 - 评估 SemVer：公开 enum 增加 variant、公开 struct 增加字段和改变 trait 实现都可能影响下游代码
