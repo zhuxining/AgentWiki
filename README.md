@@ -1,100 +1,100 @@
 # AgentWiki
 
-AgentWiki 是面向多个 AI Agent 的本地优先 Markdown 搜查层。Markdown 文件是事实源，
-SQLite FTS5 和可选的本地向量索引是可删除、可重建的派生投影。
+面向多个 AI Agent 的本地优先 Markdown 知识检索层（Rust 实现）。Markdown 文件是事实源，
+全文索引与元数据存储都是可删除、可重建的派生投影。
 
-AgentWiki 重点解决 Agent 原生文件工具不擅长的“从未知到已知”：发现历史、已有方案、
-跨文档关系和近期变化，并返回可继续读取的证据片段与路径。已知路径的读取以及文档增删改
-仍由 Agent 原生工具完成。
+## 项目价值
 
-## MCP 能力
+Agent 的原生文件工具擅长**已知路径**的读取与文档增删改，却不擅长"从未知到已知"：当任务
+涉及历史方案、团队约定、已有决策、跨文档关系或近期变化时，Agent 不知道去哪里找、找什么。
 
-| 能力               | 作用                                                     |
-| ------------------ | -------------------------------------------------------- |
-| `get_wiki_context` | 自动组合精确、关键词、语义和近期检索，为当前任务组装证据 |
-| `get_wiki_rules`   | 获取目标目录或文档适用的组织与 Frontmatter 规则          |
-| `validate_wiki`    | 在原生文件修改后检查格式、结构、Frontmatter 和内部链接   |
+AgentWiki 补上这一环：为 Agent 提供精确、关键词、语义、混合与近期检索能力，返回**可继续
+读取的证据片段与路径**，让 Agent 用原生工具回读原文后形成结论。它只做"检索 + 治理"，不做
+文档读写、不做查询 LLM、不依赖云端服务——本地优先，离线可用。
 
-`get_wiki_context` 不要求 Agent 选择搜索模式。配置 embedding 时自动执行片段级混合检索；
-不可用时保留关键词和近期查询并明确报告降级。空查询返回最近修改文档，带近期意图的主题
-查询同时考虑相关性与真实文件修改时间。
+## 基础方案
 
-## 使用
-
-```bash
-uv sync
-
-# 搜查任务上下文；省略查询可查看最近修改
-uv run agentwiki query "认证方案"
-uv run agentwiki query
-
-# 索引与治理维护
-uv run agentwiki sync-index
-uv run agentwiki rebuild-index
-uv run agentwiki rules guides
-uv run agentwiki validate-wiki --full
-
-# 启动 MCP（stdio）
-uv run agentwiki-mcp
+```
+Markdown 文档库（事实源，含 YAML Frontmatter）
+        │  增量同步（mtime/size 快速筛选 + 内容哈希确认）
+        ▼
+   ┌─────────────────────────────┐
+   │ Tantivy 检索引擎             │  BM25 关键词（lindera 中文分词）
+   │ + 可选本地向量腿（按里程碑接入）│  语义检索（模型变化自动重建）
+   └──────────────┬──────────────┘
+                  │ + SQLite 元数据：同步账本 / 图谱 / 状态（不做检索）
+                  ▼
+       排名融合 → 章节级证据 + 一跳文档关系 + 降级诊断
+                  ▼
+        CLI（agentwiki） / MCP（agentwiki-mcp）
 ```
 
-配置统一放在用户配置目录 `~/.agentwiki/config.json`，相对路径以该文件所在目录为基准解析；
-配置文件不存在时会在首次运行时创建一个默认配置：
+- **事实源**：Markdown 正文 + YAML Frontmatter；Wiki 根目录的 `AGENTWIKI.md` 是唯一的规则
+  与 Agent 指导入口（首次启动自动写入默认模板，已有文件永不覆盖）。
+- **投影**：Tantivy 提供关键词全文检索（BM25 + `lindera` 中文分词）与可选的向量腿；SQLite
+  仅作元数据镜像（同步账本 / 文档图谱 / 同步状态），**不执行**全文或向量检索。两者都可随时
+  从 Markdown 全量重建。
+- **检索**：关键词、语义与近期信号在候选集上做排名融合；同一文档最多返回两个片段；单个
+  检索源失败只降级（`degraded` 报告原因），不中断整次检索；从内部链接与 Frontmatter
+  `relations` 派生一跳文档关系。
+- **治理**：`get_wiki_rules` 返回目录适用的必填字段、类型与标签规则（完全由 `AGENTWIKI.md`
+  配置决定，系统不内置必填字段）；`validate_wiki` 只报告格式、Frontmatter 与内部链接问题，
+  绝不自动改写 Markdown。
+- **入口**：
+  - CLI（二进制 `agentwiki`）：本地检索、索引同步、重建、校验与治理维护；
+  - MCP（二进制 `agentwiki-mcp`）：为 Agent 暴露 `get_wiki_context`（任务上下文检索）、
+    `get_wiki_rules`（规则获取）、`validate_wiki`（规范校验）。已知路径读取与文档增删改
+    仍由 Agent 原生工具完成，MCP 不重复暴露。
+
+## 快速开始
+
+```bash
+# 构建
+cargo build
+
+# 搜查任务上下文（空查询列出最近修改的文档）
+cargo run --bin agentwiki query "认证方案"
+cargo run --bin agentwiki query
+
+# 索引与治理维护
+cargo run --bin agentwiki sync-index
+cargo run --bin agentwiki rebuild-index
+cargo run --bin agentwiki validate-wiki            # 全库校验
+cargo run --bin agentwiki validate-wiki --path decisions/auth.md
+
+# 查看解析后的配置
+cargo run --bin agentwiki show-config
+
+# 启动 MCP（stdio；SDK 接线完成前为占位实现）
+cargo run --bin agentwiki-mcp --features mcp
+```
+
+配置统一放在用户配置目录 `~/.agentwiki/config.json`，首次运行缺少文件时自动创建默认配置；
+进程环境变量不参与配置。CLI 可用 `--no-config` 关闭配置文件，改用 `--wiki-root` 与
+`--index-dir` 显式指定（默认文档根目录是 `~/AgentWiki`，索引目录是 `~/.agentwiki`）：
 
 ```json
 {
   "document_root": "~/AgentWiki",
-  "index_path": "~/.agentwiki/agentwiki.sqlite3",
-  "embedding_model": "BAAI/bge-small-zh-v1.5",
-  "min_similarity": 0.44
+  "index_path": "~/.agentwiki/index.sqlite3"
 }
 ```
 
-进程环境变量不会覆盖该文件。默认文档根目录是 `~/AgentWiki`。
+## 实现状态
 
-`embedding_model` 默认是 `BAAI/bge-small-zh-v1.5`（512 维，约 90 MB，首次使用会下载）：它
-面向中文检索，中文改写的召回与旧的多语言模型持平，且模型体积更小。代价是**英文**——英文
-查询对中文文档的相似度会明显抬高，弃答因此更依赖阈值。若 Wiki 的查询经常中英混排，可以换回
-`sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`（384 维，约 220 MB）；设为
-`null` 则完全禁用语义检索，关键词检索始终可用。
+Rust 重写进行中（Python 原型已归档于 `legacy/python/`，基准脚本与语料在
+`legacy/python/benchmarks/`，不再维护）。
 
-`min_similarity` 是语义命中的余弦下限，它**与模型绑定**：默认值 0.44 是在上述中文模型上用
-`tests/unit/test_semantic_retrieval.py` 的语料标定的（最弱真实改写 0.4470，真正无关的查询
-峰值 0.4281）。这个可用窗口**只有约 0.02**，远窄于旧多语言模型的约 0.20（改写 0.34–0.58 /
-无关 0.10），所以阈值更脆弱：更换模型后必须重新标定，否则会静默地全部命中或全部拒绝。
+- 已实现：CLI 子命令与配置加载、Markdown 扫描与切块、增量同步与 rebuild、SQLite 元数据
+  （账本/图谱/状态）、文档图谱、格式与规则校验；
+- 进行中（下一里程碑）：Tantivy 全文接线与检索融合、MCP SDK 三个工具、可选语义向量腿。
 
-标定必须用**索引实际嵌入的文本格式**（`title\ntags\nsection\ncontent`），而不是 Markdown
-原文——两者算出的相似度相差约 0.01–0.02，在这个窗口宽度下足以得出相反结论。
+## 文档导航
 
-还有一类查询是单阈值**分不开**的：主题相邻但并非所需。例如「如何用 Kubernetes 部署微服务」
-对一篇发布手册打 0.4965，高于最弱真实改写。纯中文 embedding 加单阈值无法区分"相邻"与
-"相关"，这类假阳性需要调用方结合 `match_sources`、`scope` 或读取原文来收敛。
-
-该阈值只有一处定义（`domain/retrieval.py` 的 `DEFAULT_MIN_SIMILARITY`），配置层直接复用，
-因为 `ContextQuery` 把它作为字段默认值：**直接构造查询的调用方（基准、测试）必须和 CLI /
-MCP 入口跑同一个阈值**。此前两处各有一个默认值并发生漂移，导致基准测的阈值和产品实际
-使用的不是同一个。
-
-首次启动若索引 schema 变更，会删除并重建派生索引（Markdown 不受影响）；重建会在日志中
-说明开始与原因，若上次重建中断则下次启动会报告。
-
-查询前会比较 Markdown 路径、`mtime_ns` 和大小，只同步发生变化的文档，因此原生工具修改后
-的下一次检索无需等待 watcher。
-
-SQLite 只是镜像索引，不做旧 schema 迁移；检测到索引版本不兼容时会直接删除索引文件并从
-Markdown 重建，原始文档不会被改动。
-
-Wiki 根目录的 `AGENTWIKI.md` 是唯一的规则与 Agent 指导入口。首次启动（CLI 或 MCP）若发现它
-不存在，会写入随包分发的默认模板；已存在的文件永远不会被覆盖。
-
-索引还会从 `[[内部链接]]`、相对 Markdown 链接和 Frontmatter `relations` 派生一跳文档关系，
-并将关系类型、来源章节、原文上下文和关联路径附加到检索证据中；目标不存在的关系会保留为
-`unresolved`。非法关系声明只产生诊断，不阻断其他文档索引。语义索引使用本地 sqlite-vec，
-按 chunk 的标题/标签/章节/正文 hash 复用未变化向量；模型切换会自动重建，首次建立等待初始
-向量同步，后续更新异步进行。扩展或 embedding 不可用时，关键词检索仍然可用。
-进程退出时未完成的向量任务会在下一次启动时恢复重试。
-
-详细设计见 [架构文档](docs/ARCHITECTURE.md)，协议见
-[MCP 能力说明](docs/MCP_TOOLS.md)，规则字段见
-[Wiki Rules 配置参考](docs/RULES.md)。真实 Wiki 基准测试见
-[benchmarks/README.md](benchmarks/README.md)。
+| 文档 | 内容 |
+| --- | --- |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 详细架构设计：数据与检索机制、模块依赖、实现状态、设计取舍 |
+| [docs/MCP_TOOLS.md](docs/MCP_TOOLS.md) | MCP 协议契约：三个工具的参数与返回结构 |
+| [docs/RULES.md](docs/RULES.md) | `AGENTWIKI.md` 规则配置参考：字段、合并语义、错误码 |
+| [docs/AGENTWIKI.md](docs/AGENTWIKI.md) | 规则文件的完整参考示例（含 sections / tag_aliases） |
+| [AGENTS.md](AGENTS.md) | 工程开发规范：构建、测试、代码与提交要求 |

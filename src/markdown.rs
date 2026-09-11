@@ -17,9 +17,11 @@ const OVERLAP_CHARS: usize = 150;
 
 /// Default `AGENTWIKI.md` seeded into a new wiki root.
 ///
-/// Mirrors the reference template in `docs/AGENTWIKI.md`. Required fields are
-/// entirely driven by this file — the system defines none by default beyond a
-/// modest starter set.
+/// This is the *minimal* starter template (name / purpose / required_fields /
+/// default_type). `docs/AGENTWIKI.md` is the complete reference example with
+/// `sections` and `tag_aliases`; the two need not match verbatim, and existing
+/// rule files are never overwritten. Required fields are entirely driven by the
+/// rule file — the system defines none by default beyond this modest starter set.
 pub const DEFAULT_AGENTWIKI: &str = "---\n\
 name: AgentWiki 示例知识库\n\
 purpose: 为 Agent 提供可检索的团队知识、操作指南和项目资料\n\

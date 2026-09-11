@@ -1,6 +1,6 @@
 # AGENTS.md
 
-本文件是 AgentWiki 全仓库的工程规范。AgentWiki 是面向多个 AI Agent 的本地优先 Markdown 文档层；详细架构见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
+本文件是 AgentWiki 全仓库的工程规范，只用于指导开发；AgentWiki 是面向多个 AI Agent 的本地优先 Markdown 知识检索层，详细架构与产品设计见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
 ## 项目概览
 
@@ -8,14 +8,14 @@ AgentWiki 使用本地 Markdown 文档库作为文档事实源，以 Markdown �
 
 当前正式入口是：
 
-- **CLI**（二进制 `agentwiki`）：本地检索、索引同步、重建、监听和治理维护入口。
-- **MCP**（二进制 `agentwiki-mcp`）：为 Agent 暴露任务上下文检索、Wiki 规则和规范校验；不重复暴露 Agent 原生文件工具。
+- **CLI**（二进制 `agentwiki`）：本地检索、索引同步、重建和治理维护入口。
+- **MCP**（二进制 `agentwiki-mcp`）：为 Agent 暴露任务上下文检索、Wiki 规则和规范校验；不重复暴露 Agent 原生文件工具（SDK 接线进行中）。
 
-HTTP API、云端同步和 Web UI 不属于当前架构承诺。
+HTTP API、云端同步和 Web UI 不属于当前架构承诺。Python 原型已归档至 `legacy/python/`（含基准脚本与语料），不再维护；开发只针对 Rust 侧。
 
 技术基础：
 
-- Rust（edition `2024`，`MSRV` 为 1.98，见 `Cargo.toml` 与 `rust-toolchain.toml`）
+- Rust（edition `2024`，`MSRV` 为 1.98，见 `Cargo.toml` 的 `package.rust-version`）
 - `tokio` 异步运行时；所有二进制入口都在 tokio 之上
 - 单一 package + `src/lib.rs` 库，CLI/MCP 作为独立的 `[[bin]]` 共享库
 - 检索引擎为 `tantivy`（+ `lindera` 中文分词）；`rusqlite` 仅作元数据存储（同步账本 / 图谱 / 状态），**不执行全文或向量检索**
@@ -31,19 +31,17 @@ HTTP API、云端同步和 Web UI 不属于当前架构承诺。
 src/
 ├── lib.rs               # 库根；声明模块、顶层 re-export，`forbid(unsafe_code)`
 ├── main.rs              # CLI composition root（二进制 agentwiki）
-├── mcp.rs               # MCP composition root（二进制 agentwiki-mcp，feature `mcp`）
+├── mcp.rs               # MCP composition root（二进制 agentwiki-mcp，feature `mcp`；SDK 接线进行中）
 ├── error.rs             # 统一库错误类型（thiserror）
 ├── model.rs             # 纯领域类型（依赖无关的 value objects / query structs）
 ├── markdown.rs          # Markdown 只读解析、Frontmatter、路径安全、标题感知切块
 ├── graph.rs             # 一跳文档关系抽取（显式声明的关系，不自动抽取实体）
 ├── storage.rs           # rusqlite 元数据存储：同步账本、图谱、状态
 ├── sync.rs              # Markdown → 索引/元数据的增量投影与 rebuild
-└── tantivy_svc.rs       # 检索引擎的唯一边界封装（写索引 / BM25 查询 / 可选向量腿）
-
-# 计划中（随实现落地）：
-runtime.rs               # 显式资源装配、同步锁、可选 watcher、索引生命周期
-search.rs                # 检索编排、排名融合、scope 过滤
-validate.rs              # 格式、结构、Frontmatter 与内部链接校验
+├── tantivy_svc.rs       # 检索引擎的唯一边界封装（写索引 / BM25 查询 / 可选向量腿；全文接线进行中）
+├── runtime.rs           # 显式资源装配、同步锁、可选 watcher、索引生命周期
+├── search.rs            # 检索编排、排名融合、scope 过滤与降级
+└── validate.rs          # 格式、结构、Frontmatter 与内部链接校验
 ```
 
 当前依赖方向必须保持为：
@@ -64,6 +62,8 @@ CLI / MCP composition roots (main.rs / mcp.rs)
 - `markdown` 只读，从不写 Markdown；文档增删改由 Agent 原生工具完成。
 - `main.rs` / `mcp.rs` 只负责协议适配、参数解析、用例调用和序列化；只有 composition root 读取全局配置，其余模块通过构造参数接收依赖。
 - 越层导入（如业务层直接依赖 Tantivy 或 rusqlite 连接）属于架构破坏。
+
+各模块的详细职责、数据流、实现状态与设计取舍见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 第 2、3 节；上文是必须保持的开发约束，不是设计描述。
 
 ## 常用命令
 
@@ -103,7 +103,7 @@ MCP 相关目标默认被 `mcp` feature 隐藏：`cargo build --all-features` �
 - 新增依赖前先检查现有依赖是否已提供等价能力，避免引入同类替代品。
 - 依赖尽量收窄 feature；`rusqlite` 使用 `bundled` 避免宿主机 sqlite 依赖。
 - 修改 `Cargo.toml` 后让 Cargo 重新解析并同步 `Cargo.lock`（`cargo build` 或 `cargo update -w`）。
-- 工具链由 `rust-toolchain.toml` 统一固定到最新 stable；使用新语法、标准库 API 或依赖版本前，确认不会无意提高 MSRV（`package.rust-version` 当前为 `1.98`）。
+- 工具链跟随最新 stable；使用新语法、标准库 API 或依赖版本前，确认不会无意提高 MSRV（`package.rust-version` 当前为 `1.98`）。
 - 配置模型使用 `serde` 从用户配置目录 `~/.agentwiki/config.json` 读取并校验（`validator` 校验规则）；不读取环境变量，业务模块只接收已解析的构造参数。首次运行缺少配置文件时创建默认配置。
 - 错误处理：库错误用 `thiserror`（`error.rs`），应用入口（`main.rs` / `mcp.rs`）转成 `anyhow::Error` 收敛。
 
@@ -153,7 +153,7 @@ Commit 遵循 Conventional Commits：`feat`、`fix`、`refactor`、`docs`、`tes
 
 ### 项目约束
 
-- 修改前检查 `Cargo.toml`、`rust-toolchain.toml`、edition、`rust-version`、feature 和 CI 配置
+- 修改前检查 `Cargo.toml`、edition、`rust-version`、feature 和 CI 配置
 - 遵循项目已有的错误类型、异步运行时、日志、测试和依赖约定
 - 使用新语法、标准库 API 或依赖版本前，确认不会无意提高 MSRV
 - 注意 `no_std`、目标平台和 workspace resolver，不假设所有 feature 可以同时启用（本项目 `mcp` 为可选 feature，核心库不应依赖它）

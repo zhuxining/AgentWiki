@@ -138,14 +138,6 @@ sections:
 | `markdown.formatting` | warning | 文档不符合 mdformat 规范 |
 | `markdown.parse` | error | Markdown 或 YAML Frontmatter 无法解析 |
 
-## 开发与验证命令
+## 开发与验证
 
-提交前门禁收敛到 Cargo 自带命令，CI 与本地执行同一批目标：
-
-```bash
-cargo fmt --all -- --check     # 格式化检查
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace         # 单元 + 集成测试
-cargo build --features mcp --bin agentwiki-mcp   # MCP 入口可编译
-cargo bench                    # 检索基准（criterion）
-```
+本文只描述规则配置契约。构建、测试与提交前检查命令见仓库根目录的 [AGENTS.md](../AGENTS.md)。

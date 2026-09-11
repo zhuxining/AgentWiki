@@ -1,11 +1,13 @@
 # AgentWiki MCP 能力
 
-AgentWiki MCP 只提供任务检索、组织规则和确定性校验。已知路径读取与 Markdown 增删改由
-Agent 原生文件工具完成。
+> **实现状态**：本文定义 MCP 协议的契约（目标态）。当前 `agentwiki-mcp` 的 SDK 接线尚在
+> 进行中（`src/mcp.rs` 为占位实现），三个工具完整可用前请以 CLI 与本文档的契约为准。
 
-运行配置只读取用户配置目录 `~/.agentwiki/config.json`，不读取环境变量。相对的文档库和索引
-路径以该配置文件所在目录（即 `~/.agentwiki`）为基准解析；配置文件缺失时首次运行会创建默认
-配置，默认文档根目录是 `~/AgentWiki`。
+AgentWiki MCP 只提供任务检索、组织规则和确定性校验。已知路径读取与 Markdown 增删改由
+Agent 原生文件工具完成，MCP 不重复暴露。
+
+运行配置只读取用户配置目录 `~/.agentwiki/config.json`，不读取环境变量；缺省文档库根目录是
+`~/AgentWiki`。配置模型与加载细节见 [ARCHITECTURE.md](ARCHITECTURE.md) 第 1、3 节。
 
 ## `get_wiki_context`
 

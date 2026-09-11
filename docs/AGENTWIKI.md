@@ -54,6 +54,11 @@ tag_aliases:
     - arch
 ---
 
+> **本文档定位**：这是规则文件 `AGENTWIKI.md` 的**完整参考示例**，演示 `sections`、
+> `tag_aliases` 等进阶能力。新建 Wiki 时实际写入的是代码内置的**精简默认模板**
+> （`src/markdown.rs` 的 `DEFAULT_AGENTWIKI`，仅 `name` / `purpose` / `required_fields` /
+> `default_type`）；规则文件已存在时永远不被覆盖。把本文件复制到 Wiki 根目录即启用完整规则。
+
 # AgentWiki 使用指南
 
 ## 检索知识
