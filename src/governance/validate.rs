@@ -139,6 +139,18 @@ fn validate_one(
             severity: Severity::Error,
         });
     }
+
+    // 5) Formatting conformance (report-only): the same in-memory dprint
+    // comparison used by `fix_format`, flagged as a warning so agents can
+    // decide whether to request an explicit format rewrite.
+    if let Ok(Some(_)) = crate::governance::format::format_markdown(&raw) {
+        issues.push(Issue {
+            path: path.0.to_string(),
+            kind: "markdown.formatting".into(),
+            message: "document differs from dprint formatting".into(),
+            severity: Severity::Warning,
+        });
+    }
 }
 
 /// Rule-driven checks: required fields, type/filename constraints of the most

@@ -37,11 +37,7 @@ dependencies = [
  "tempfile",
  "text-splitter",
  "thiserror",
- "time",
  "tokio",
- "tracing",
- "tracing-subscriber",
- "walkdir",
 ]
 
 [[package]]

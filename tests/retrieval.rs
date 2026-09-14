@@ -2,6 +2,10 @@ use agentwiki::model::{ContextQuery, PathScope, Slice};
 use agentwiki::retrieval::LanceIndex;
 use tempfile::tempdir;
 
+// Lance FTS uses the jieba tokenizer since ACCEPTANCE GAP-3; the dictionary
+// must be present (LANCE_LANGUAGE_MODEL_HOME or the default language-model
+// directory) or every `LanceIndex::open` fails with download instructions.
+
 #[test]
 fn lancedb_indexes_and_queries_chunks() {
     let dir = tempdir().unwrap();
@@ -28,6 +32,38 @@ fn lancedb_indexes_and_queries_chunks() {
         .unwrap();
     assert_eq!(result.len(), 1);
     assert_eq!(result[0].slice.path.0.as_str(), "notes/auth.md");
+}
+
+#[test]
+fn lancedb_chinese_fts_matches_contiguous_text() {
+    // Regression for GAP-3: with the default `simple` tokenizer a contiguous
+    // Chinese sentence becomes one token and query terms never match; jieba
+    // must segment 认证方案/令牌/轮换 strategy words out of the sentence.
+    let dir = tempdir().unwrap();
+    let index = LanceIndex::open(camino::Utf8Path::from_path(dir.path()).unwrap(), None).unwrap();
+    let path = PathScope("notes/认证.md".into());
+    let slice = Slice {
+        path: path.clone(),
+        chunk_id: "chunk-zh".into(),
+        ordinal: 0,
+        section: "刷新令牌".into(),
+        content: "认证方案采用OAuth2协议，刷新令牌轮换策略30天。".into(),
+        source_hash: "hash-zh".into(),
+    };
+    index.replace_slices(&path, &[slice]).unwrap();
+    for query in ["认证", "令牌", "轮换", "认证方案", "刷新令牌"] {
+        let result = index
+            .search(
+                &ContextQuery {
+                    query: query.into(),
+                    limit: 10,
+                    ..Default::default()
+                },
+                false,
+            )
+            .unwrap();
+        assert_eq!(result.len(), 1, "query `{query}` should hit with jieba");
+    }
 }
 
 #[test]

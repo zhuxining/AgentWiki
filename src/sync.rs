@@ -44,11 +44,16 @@ impl SyncContext {
             Some(Err(error)) => (None, Some(error)),
             None => (None, None),
         };
-        let meta = MetaStore::open(index_dir)?;
-        let index = LanceIndex::open(index_dir, model.map(|_| 512))?;
+        let mut meta = MetaStore::open(index_dir)?;
         if meta.needs_rebuild {
-            index.reset()?;
+            // Projection format mismatch (schema or retrieval format version):
+            // wipe the LanceDB library and the ledger so the fresh `LanceIndex`
+            // below is recreated with current parameters (FTS tokenizer config
+            // lives inside the index — deleting rows would keep the old one).
+            remove_all(index_dir.join("lancedb"))?;
+            meta.clear()?;
         }
+        let index = LanceIndex::open(index_dir, model.map(|_| 512))?;
         Ok(Self {
             root: root.into(),
             index,
@@ -68,6 +73,22 @@ impl SyncContext {
         let current: std::collections::BTreeSet<_> =
             paths.iter().map(|p| p.0.to_string()).collect();
         let previous = self.meta.ledger_snapshot()?;
+        // Removed paths grouped by their last known content hash, plus the
+        // identities already inherited this round, for unique move-pairing:
+        // content reappearing at exactly one new path keeps its identity,
+        // ambiguous duplicates are treated as add+delete.
+        let mut removed_by_hash: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+        for (path, fp) in &previous {
+            if !current.contains(path.as_str()) {
+                removed_by_hash
+                    .entry(fp.content_hash.clone())
+                    .or_default()
+                    .push(path.clone());
+            }
+        }
+        let mut inherited_identities: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
         let mut report = SyncReport::default();
         if let Some(error) = &self.embedding_error {
             report
@@ -120,19 +141,34 @@ impl SyncContext {
                 self.index.replace_slices(path, &slices)?;
                 self.meta.replace_document(path, &edges)?;
                 self.meta.set_title(path, &doc.title)?;
+                let fresh_identity = || {
+                    hex::encode(Sha256::digest(format!(
+                        "{}:{}",
+                        path.0, doc.fingerprint.content_hash
+                    )))
+                };
+                let stable_identity = if identity.is_empty() {
+                    if prev.is_none()
+                        && let Some(candidates) = removed_by_hash.get(&doc.fingerprint.content_hash)
+                        && candidates.len() == 1
+                        && let Ok((_, _, old_identity)) = self.meta.sync_state(&candidates[0])
+                        && !old_identity.is_empty()
+                        && inherited_identities.insert(old_identity.clone())
+                    {
+                        report.moved += 1;
+                        old_identity
+                    } else {
+                        fresh_identity()
+                    }
+                } else {
+                    identity
+                };
                 self.meta.upsert_ledger(&crate::storage::LedgerRow {
                     path: path.0.to_string(),
                     content_hash: doc.fingerprint.content_hash.clone(),
                     mtime_ns: doc.fingerprint.mtime_ns,
                     size: doc.fingerprint.size,
-                    stable_identity: if identity.is_empty() {
-                        hex::encode(Sha256::digest(format!(
-                            "{}:{}",
-                            path.0, doc.fingerprint.content_hash
-                        )))
-                    } else {
-                        identity
-                    },
+                    stable_identity,
                     sync_error: self
                         .embedder
                         .as_ref()
@@ -202,6 +238,10 @@ impl SyncContext {
             self.meta.ledger_snapshot()?
         )));
         self.meta.set_generation(&report.generation)?;
+        // Confirm the retrieval format only after the projection round
+        // succeeded, keeping a failed round force a full rebuild next time.
+        self.meta
+            .set_retrieval_format(crate::storage::RETRIEVAL_FORMAT)?;
         Ok(report)
     }
     pub fn rebuild(&mut self) -> Result<SyncReport> {
@@ -228,4 +268,13 @@ fn acquire_lock(path: &Utf8Path) -> Result<std::fs::File> {
         source,
     })?;
     Ok(file)
+}
+
+/// Recursively remove a directory, treating a missing path as success.
+fn remove_all(path: camino::Utf8PathBuf) -> Result<()> {
+    match std::fs::remove_dir_all(&path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(source) => Err(AgentWikiError::Io { path, source }),
+    }
 }

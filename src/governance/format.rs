@@ -18,7 +18,20 @@ pub fn format_markdown(source: &str) -> Result<Option<String>, String> {
                 break;
             }
         }
-        end.ok_or_else(|| "unterminated frontmatter".to_string())?
+        let end = end.ok_or_else(|| "unterminated frontmatter".to_string())?;
+        // Keep the blank line(s) between the closing `---` and the body as
+        // part of the untouched frontmatter prefix: dprint treats a leading
+        // blank line as noise and would otherwise delete it, turning every
+        // conventionally formatted document into a "formatting difference".
+        let mut body_start = end;
+        while let Some(ch) = source[body_start..].chars().next() {
+            if ch == '\n' || ch == '\r' {
+                body_start += ch.len_utf8();
+            } else {
+                break;
+            }
+        }
+        body_start
     } else {
         0
     };
@@ -70,10 +83,9 @@ pub fn format_file(
         || current.modified().map_err(io)? != metadata.modified().map_err(io)?
         || std::fs::read_to_string(&file).map_err(io)? != original
     {
-        return Err(AgentWikiError::Other(format!(
-            "{}: formatting conflict; file changed",
-            path.0
-        )));
+        return Err(AgentWikiError::FormatConflict {
+            path: path.0.clone(),
+        });
     }
     temporary.persist(&file).map_err(|e| io(e.error))?;
     Ok(true)

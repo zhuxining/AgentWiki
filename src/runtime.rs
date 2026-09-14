@@ -52,9 +52,17 @@ impl Runtime {
                 match crate::governance::format::format_file(&self.root, &path) {
                     Ok(true) => formatted_paths.push(path.0.to_string()),
                     Ok(false) => {}
+                    Err(crate::error::AgentWikiError::FormatConflict { .. }) => {
+                        failures.push(crate::model::Issue {
+                            path: path.0.to_string(),
+                            kind: "format.conflict".into(),
+                            message: "formatting conflict; file changed externally".into(),
+                            severity: crate::model::Severity::Error,
+                        })
+                    }
                     Err(error) => failures.push(crate::model::Issue {
                         path: path.0.to_string(),
-                        kind: "format.write".into(),
+                        kind: "format.failed".into(),
                         message: error.to_string(),
                         severity: crate::model::Severity::Error,
                     }),
@@ -142,6 +150,30 @@ impl Runtime {
             crate::document::scope_path(&self.root, &scope.0)?;
         }
         crate::governance::validate::validate_wiki(&self.root, scope)
+    }
+
+    /// Display metadata for one indexed document (title, real mtime ns,
+    /// frontmatter). Used by the MCP layer to assemble the contractual
+    /// `results[]` shape; missing documents fall back to defaults, never error.
+    pub fn hit_metadata(&self, path: &str) -> Result<(String, i64, crate::model::Frontmatter)> {
+        let title = self.sync.meta.title_for(path)?.unwrap_or_default();
+        let mtime_ns = self.sync.meta.ledger_fingerprint(path)?.mtime_ns;
+        let frontmatter = self.sync.meta.frontmatter_for_path(path)?;
+        Ok((title, mtime_ns, frontmatter))
+    }
+
+    /// Parsed governance rules from `AGENTWIKI.md` (structured contract output).
+    pub fn rules(&self) -> Result<crate::model::Rule> {
+        let path = crate::model::PathScope("AGENTWIKI.md".into());
+        let document = crate::document::read_document(&self.root, &path)?;
+        crate::governance::rules::parse_rules(&document.frontmatter)
+    }
+
+    /// Dynamic known-tag set from the ledger projection, most used first.
+    pub fn known_tags(&self) -> Result<Vec<String>> {
+        let mut counts: Vec<(String, usize)> = self.sync.meta.all_tags()?.into_iter().collect();
+        counts.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        Ok(counts.into_iter().map(|(tag, _)| tag).collect())
     }
 }
 

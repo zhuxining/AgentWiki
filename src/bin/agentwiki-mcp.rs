@@ -65,6 +65,13 @@ struct ValidateArgs {
 }
 
 #[cfg(feature = "mcp")]
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct RulesArgs {
+    #[serde(default)]
+    scope: String,
+}
+
+#[cfg(feature = "mcp")]
 #[rmcp::tool_router(server_handler)]
 impl McpServer {
     #[rmcp::tool(
@@ -81,19 +88,66 @@ impl McpServer {
                 .lock()
                 .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))?;
             let mut query = agentwiki::model::ContextQuery::default();
-            query.query = args.query;
-            query.scope = args.scope;
+            query.query = args.query.clone();
+            query.scope = args.scope.clone();
             query.limit = args.limit;
-            query.tags = args.tags;
-            query.note_types = args.note_types;
-            query.metadata_filters = args.metadata_filters;
-            runtime
+            query.tags = args.tags.clone();
+            query.note_types = args.note_types.clone();
+            query.metadata_filters = args.metadata_filters.clone();
+            let result = runtime
                 .query(&query)
-                .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))
-                .and_then(|result| {
-                    serde_json::to_string(&result)
-                        .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))
-                })
+                .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))?;
+            // Assemble the contractual response shape (MCP_TOOLS.md),
+            // enriching each ranked slice with title / mtime / frontmatter.
+            let mut results = Vec::new();
+            for (index, hit) in result.slices.iter().enumerate() {
+                let (title, mtime_ns, frontmatter) = runtime
+                    .hit_metadata(hit.slice.path.0.as_str())
+                    .unwrap_or_default();
+                // One-hop relations attach to the primary hit only.
+                let related = if index == 0 {
+                    result
+                        .related
+                        .iter()
+                        .map(serde_json::to_value)
+                        .collect::<std::result::Result<Vec<_>, _>>()
+                        .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))?
+                } else {
+                    Vec::new()
+                };
+                results.push(serde_json::json!({
+                    "path": hit.slice.path.0,
+                    "title": title,
+                    "section": hit.slice.section,
+                    "snippet": hit.slice.content,
+                    "rank_score": hit.score,
+                    "match_sources": hit.sources,
+                    "modified_at": rfc3339_from_nanos(mtime_ns),
+                    "frontmatter": frontmatter,
+                    "related": related,
+                }));
+            }
+            let strategy = if query.query.trim().is_empty() {
+                "recent"
+            } else if result
+                .slices
+                .iter()
+                .any(|s| s.sources.iter().any(|src| src == "semantic"))
+            {
+                "hybrid"
+            } else {
+                "keyword"
+            };
+            let truncated = results.len() >= query.limit;
+            serde_json::to_string(&serde_json::json!({
+                "query": args.query,
+                "scope": args.scope,
+                "strategy": strategy,
+                "degraded": result.degraded,
+                "results": results,
+                "truncated": truncated,
+            }))
+            .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))
         })
         .await
         .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))?
@@ -131,23 +185,45 @@ impl McpServer {
         name = "get_wiki_rules",
         description = "Return the reserved AGENTWIKI.md rule document."
     )]
-    async fn get_wiki_rules(&self) -> Result<String, rmcp::ErrorData> {
+    async fn get_wiki_rules(
+        &self,
+        rmcp::handler::server::wrapper::Parameters(args): rmcp::handler::server::wrapper::Parameters<RulesArgs>,
+    ) -> Result<String, rmcp::ErrorData> {
         let shared = self.runtime.clone();
         tokio::task::spawn_blocking(move || {
-            let runtime = shared
+            let mut runtime = shared
                 .lock()
+                .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))?;
+            // The contract requires a fresh document projection before rules:
+            // known_tags come from the ledger, not from the rule file.
+            runtime
+                .ensure_fresh()
                 .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))?;
             let path = agentwiki::model::PathScope("AGENTWIKI.md".into());
             let document = agentwiki::document::read_document(&runtime.root, &path)
                 .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))?;
             let guide_content = agentwiki::document::read_body(&runtime.root, &path)
                 .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))?;
+            // Structured rules per the contract: root rule plus every section
+            // matching the requested scope. A broken rule file is an error, so
+            // agents never silently operate without governing rules.
+            let parsed = agentwiki::governance::rules::parse_rules(&document.frontmatter)
+                .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))?;
+            let effective = agentwiki::governance::rules::effective_rules(&args.scope, &parsed);
+            let known_tags = runtime
+                .known_tags()
+                .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))?;
             serde_json::to_string(&serde_json::json!({
                 "wiki_root": runtime.root,
-                "frontmatter": document.frontmatter,
                 "guide_content": guide_content,
                 "source_modified_at_ns": document.fingerprint.mtime_ns,
                 "source_size": document.fingerprint.size,
+                "default_type": effective.default_type,
+                "required_fields": effective.required_fields,
+                "tag_aliases": effective.tag_aliases,
+                "sections": effective.sections,
+                "known_tags": known_tags,
+                "scope": args.scope,
             }))
             .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))
         })
@@ -178,4 +254,32 @@ async fn async_main() -> anyhow::Result<()> {
     let running = server.serve(rmcp::transport::stdio()).await?;
     running.waiting().await?;
     Ok(())
+}
+
+/// Convert a unix-epoch nanosecond timestamp into RFC 3339 UTC (contract
+/// `modified_at`); zero/negative timestamps yield the epoch.
+#[cfg(feature = "mcp")]
+fn rfc3339_from_nanos(nanos: i64) -> String {
+    let secs = nanos.div_euclid(1_000_000_000);
+    let days = secs.div_euclid(86_400);
+    let rem = secs.rem_euclid(86_400);
+    let (year, month, day) = civil_from_days(days);
+    let (hour, minute, second) = (rem / 3600, (rem % 3600) / 60, rem % 60);
+    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
+}
+
+/// Howard Hinnant's days-from-civil algorithm (public domain).
+#[cfg(feature = "mcp")]
+fn civil_from_days(z: i64) -> (i64, u32, u32) {
+    let z = z + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    let year = if month <= 2 { y + 1 } else { y };
+    (year, month, day)
 }

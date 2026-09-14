@@ -134,7 +134,7 @@ path 使用 Wiki 根目录下的相对路径，统一使用 `/`：
 - 所有问题都由 `validate_wiki` 返回；默认不写文件，只有显式 fix_format=true 才修复格式，不修复规则或元数据问题。
 - 配置中的未知字段会被拒绝，避免拼写错误或无效规则被静默忽略。
 
-## 格式检查与修复（待实现）
+## 格式检查与修复
 
 使用内置 dprint-plugin-markdown，取消旧 mdformat 等价承诺；不需要额外安装 Python、Node 或格式化命令。统一配置使用 LF、80 列目标宽度、保持原有段落换行（TextWrap::Maintain），其他 Markdown 风格使用锁定组件版本的默认值，不新增用户格式配置字段。[配置接口](https://docs.rs/dprint-plugin-markdown/latest/dprint_plugin_markdown/configuration/struct.ConfigurationBuilder.html)
 
@@ -156,11 +156,11 @@ path 使用 Wiki 根目录下的相对路径，统一使用 `/`：
 | `tags.non_canonical` | warning | 标签是别名或大小写不规范，并给出规范标签建议 |
 | `tags.new` | warning | 标签首次出现且尚未配置为规范标签 |
 | `link.broken` | warning | 内部 Markdown 链接目标不存在 |
-| `markdown.formatting` | warning | 文档与内置 dprint 格式结果不同（待实现） |
+| `markdown.formatting` | warning | 文档与内置 dprint 格式结果不同 |
 | `markdown.parse` | error | Markdown 或 YAML Frontmatter 无法解析 |
 | `rules.parse` | error | 规则配置或模式非法，无法应用规则 |
-| `format.conflict` | error | 格式写回前发现外部修改，已跳过该文件（待实现） |
-| `format.failed` | error | 格式化或安全写回失败（待实现） |
+| `format.conflict` | error | 格式写回前发现外部修改，已跳过该文件 |
+| `format.failed` | error | 格式化或安全写回失败 |
 
 ## 开发与验证
 

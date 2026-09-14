@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 pub struct PathScope(pub Utf8PathBuf);
 
 /// File-level fingerprint used by the incremental sync fast path.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Fingerprint {
     /// SHA-256 of the file content.
     pub content_hash: String,
@@ -178,12 +178,29 @@ pub struct RankedSlice {
     pub sources: Vec<String>,
 }
 
-/// Related documents returned alongside a retrieval bundle (one hop).
+/// A one-hop document relation attached to a retrieval hit (contract shape:
+/// MCP_TOOLS.md `get_wiki_context.related[]`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RelatedDocument {
     pub path: PathScope,
+    /// Display title of the target document (empty when unknown).
+    pub title: String,
     pub relation_type: String,
+    pub direction: RelationDirection,
+    #[serde(rename = "resolution_status")]
     pub status: EdgeStatus,
+    /// Section of the source document that declared the relation.
+    #[serde(rename = "source_section")]
+    pub section_source: String,
+    /// Source text around the declaration, when recoverable.
+    pub context: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RelationDirection {
+    Incoming,
+    Outgoing,
 }
 
 /// Result of a `get_wiki_context` retrieval.
@@ -238,7 +255,7 @@ impl Default for ContextQuery {
             tags: Vec::new(),
             note_types: Vec::new(),
             metadata_filters: Frontmatter::new(),
-            min_similarity: 0.0,
+            min_similarity: SEMANTIC_MIN_SIMILARITY,
         }
     }
 }
@@ -249,6 +266,14 @@ impl ContextQuery {
         self.query.trim().is_empty()
     }
 }
+
+/// Default floor for semantic hits (similarity = 1/(1+L2 distance)).
+///
+/// Calibrated on 2026-09-14 against bge-small-zh-v1.5 with a small Chinese
+/// wiki (docs ACCEPTANCE.md L2): unrelated queries topped out at 0.4505 while
+/// the weakest relevant paraphrase scored 0.4760; 0.46 separates them on this
+/// corpus. Re-calibrate on the fixed benchmark corpus before relying on it.
+pub const SEMANTIC_MIN_SIMILARITY: f64 = 0.46;
 
 /// Severity of a validation finding (`validate` output contract).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

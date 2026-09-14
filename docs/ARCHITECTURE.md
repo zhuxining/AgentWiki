@@ -37,7 +37,7 @@ HTTP API、云同步、Web UI、查询 LLM、实体自动抽取和操作审计�
 | 异步 / 日志 / 错误 | tokio / tracing / thiserror + anyhow | 生命周期与系统边界上下文 |
 | 路径 / 指纹 / 锁 | camino / sha2 / fs2 | UTF-8 路径、变更确认、跨进程写协调 |
 
-LanceDB 承接 BM25、向量查询、过滤与 RRF；默认 ICU 分词，不自建中文分词适配器或通用融合算法。专业词和代码标识符效果通过固定语料验证，不能由组件支持推断召回质量。[FTS 配置](https://docs.rs/lancedb/latest/lancedb/index/scalar/struct.FtsIndexBuilder.html)、[RRF](https://docs.rs/lancedb/latest/lancedb/rerankers/rrf/struct.RRFReranker.html)
+LanceDB 承接 BM25、向量查询、过滤与 RRF；FTS 显式配置 jieba 中文分词（词典在 Lance 语言模型目录，由 `LANCE_LANGUAGE_MODEL_HOME` 或平台数据目录提供，安装说明见 README；缺失时给出明确指引），不自建中文分词适配器或通用融合算法。专业词和代码标识符效果通过固定语料验证，不能由组件支持推断召回质量。[FTS 配置](https://docs.rs/lancedb/latest/lancedb/index/scalar/struct.FtsIndexBuilder.html)、[RRF](https://docs.rs/lancedb/latest/lancedb/rerankers/rrf/struct.RRFReranker.html)
 
 FastEmbed 首个支持 `BAAI/bge-small-zh-v1.5`，适配其模型枚举和资源，不自行实现模型分词、池化或推理。关闭模型时不初始化推理资源；启用后按需准备本地缓存，准备完成后离线运行。[FastEmbed](https://docs.rs/fastembed/latest/fastembed/)
 

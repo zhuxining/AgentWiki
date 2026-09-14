@@ -39,8 +39,6 @@ thiserror = "2"
 anyhow = "1"
 camino = { version = "1", features = ["serde1"] }
 dirs = "6"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # ---------------------------------------------------------------------------
 # Data & IO
@@ -51,7 +49,6 @@ pulldown-cmark = "0.13"
 rusqlite = { version = "0.40", features = ["bundled"] }
 fs2 = "0.4"
 tempfile = "3"
-time = { version = "0.3", features = ["formatting"] }
 
 # ---------------------------------------------------------------------------
 # Retrieval (embedded LanceDB + local embeddings)
@@ -63,7 +60,6 @@ arrow-schema = "58"
 futures = "0.3"
 fastembed = "6"
 text-splitter = { version = "0.27", features = ["markdown"] }
-walkdir = "2"
 globset = "0.4"
 dprint-plugin-markdown = "0.22"
 
@@ -74,7 +70,10 @@ clap = { version = "4", features = ["derive", "env"] }
 
 # MCP server SDK — kept behind the `mcp` feature so the core library stays
 # SDK-free and the ecosystem churn does not block the rest of the workspace.
-rmcp = { version = "3.3", optional = true, features = ["server", "transport-io"] }
+rmcp = { version = "3.3", optional = true, features = [
+    "server",
+    "transport-io",
+] }
 schemars = { version = "1", optional = true }
 
 [features]

@@ -46,14 +46,9 @@ cargo run --bin agentwiki validate-wiki --path decisions/auth.md
 cargo run --bin agentwiki validate-wiki
 cargo run --bin agentwiki query "认证方案"
 cargo run --bin agentwiki query ""
-cargo run --bin agentwiki-mcp --features mcp
-```
-
-**迁移后新增，当前不可用**：
-
-```bash
 cargo run --bin agentwiki validate-wiki --path decisions/auth.md --fix-format
 cargo run --bin agentwiki validate-wiki --full --fix-format
+cargo run --bin agentwiki-mcp --features mcp
 ```
 
 默认校验不写文件。单文件修复必须指定 `--path`，全库修复必须指定 `--full`；两种范围互斥。格式修复不修正标签、链接或业务内容。
@@ -71,7 +66,22 @@ cargo run --bin agentwiki validate-wiki --full --fix-format
 
 - `wiki_root`：Wiki 根目录；`~` 展开为主目录，相对路径以配置目录为基准。`--wiki-root` 优先于配置文件。
 - `embedding_model`：`null` 或缺省关闭语义检索。支持值为 `BAAI/bge-small-zh-v1.5`，由 FastEmbed 适配并在同步时写入 LanceDB 向量投影；模型准备完成后支持离线使用。
-- 派生数据仍位于 `~/.agentwiki/`。当前共用一组投影；目标按规范化 Wiki 根目录隔离投影，模型缓存单独存放，无需新增配置项。
+- 派生数据位于 `~/.agentwiki/`，按规范化 Wiki 根目录隔离投影，模型缓存单独存放，无需新增配置项。
+
+### 中文分词词典（首次运行前置）
+
+关键词检索使用 LanceDB FTS 的 jieba 中文分词器，词典不随 CRATE 分发，首次运行前准备一次（缺失时命令会给出同样指引）：
+
+```bash
+# macOS：~/Library/Application Support/lance/language_models/jieba/default/dict.txt
+mkdir -p "$HOME/Library/Application Support/lance/language_models/jieba/default"
+curl -L -o "$HOME/Library/Application Support/lance/language_models/jieba/default/dict.txt" \
+  https://cdn.jsdelivr.net/gh/fxsjy/jieba@master/jieba/dict.txt
+
+# Linux：~/.local/share/lance/language_models/jieba/default/dict.txt
+```
+
+也可设置 `LANCE_LANGUAGE_MODEL_HOME=$PWD/lm`（该目录下需含 `jieba/default/dict.txt`）。分词器变更会触发投影自动全量重建。
 
 Wiki 根目录的 `AGENTWIKI.md` 是唯一规则与 Agent 指导入口，不进入普通文档索引。Runtime 缺失时写入默认模板，已存在时不覆盖；CLI 与 MCP 共用 Runtime。必填字段由规则声明，系统不内置必填字段。
 

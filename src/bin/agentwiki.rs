@@ -38,6 +38,15 @@ enum Command {
         /// Restrict to a wiki-relative path scope.
         #[arg(long, default_value_t = String::new())]
         scope: String,
+        /// Require this tag (repeatable; all tags must be present).
+        #[arg(long = "tag", value_name = "TAG")]
+        tags: Vec<String>,
+        /// Require one of these document types (repeatable).
+        #[arg(long = "note-type", value_name = "TYPE")]
+        note_types: Vec<String>,
+        /// Frontmatter equality filter KEY=VALUE (repeatable; all must hold).
+        #[arg(long = "metadata", value_name = "KEY=VALUE")]
+        metadata: Vec<String>,
     },
     /// Reconcile the index/metadata projections with the wiki.
     SyncIndex,
@@ -92,12 +101,27 @@ fn run() -> anyhow::Result<()> {
             query,
             limit,
             scope,
+            tags,
+            note_types,
+            metadata,
         } => {
             // Prefer to serve a fresh projection on-demand.
+            let mut metadata_filters = agentwiki::model::Frontmatter::new();
+            for pair in &metadata {
+                let Some((key, value)) = pair.split_once('=') else {
+                    anyhow::bail!("--metadata expects KEY=VALUE, got `{pair}`");
+                };
+                let value = serde_json::from_str(value)
+                    .unwrap_or_else(|_| serde_json::Value::String(value.to_string()));
+                metadata_filters.insert(key.to_string(), value);
+            }
             let q = ContextQuery {
                 query,
                 scope,
                 limit,
+                tags,
+                note_types,
+                metadata_filters,
                 ..Default::default()
             };
             let res = rt.query(&q)?;

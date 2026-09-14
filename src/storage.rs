@@ -12,6 +12,12 @@ use rusqlite::Connection;
 use crate::error::Result;
 use crate::model::{Edge, EdgeStatus, PathScope};
 
+/// Retrieval projection format version, stored under `retrieval_format` in
+/// `index_meta`. Bump whenever the LanceDB index layout or tokenizer
+/// configuration changes: a mismatch marks the projection for full rebuild
+/// (derived projections are wiped, never migrated).
+pub const RETRIEVAL_FORMAT: &str = "fts-jieba-v1";
+
 /// Thin wrapper over a `rusqlite::Connection` for wiki metadata.
 ///
 /// `Connection` is `Send` but not `Sync`; callers that need sharing across
@@ -61,10 +67,24 @@ impl MetaStore {
             conn.execute_batch(SCHEMA_SQL)?;
         }
 
+        // Retrieval projection format: a tokenizer/index layout change must
+        // rebuild the whole LanceDB projection, not just delete rows (the FTS
+        // index parameters live inside the index). Absent marker also counts
+        // as stale — every pre-marker projection is rebuilt once.
+        let format_matches = conn
+            .query_row(
+                "SELECT value FROM index_meta WHERE key = 'retrieval_format'",
+                [],
+                |r| r.get::<_, String>(0),
+            )
+            .ok()
+            .as_deref()
+            == Some(RETRIEVAL_FORMAT);
+
         // Mirrors the Python write-serialization discipline: a single write
         // mutex serializes every mutation regardless of task scheduling.
         Ok(MetaStore {
-            needs_rebuild: cur != SCHEMA_VERSION,
+            needs_rebuild: cur != SCHEMA_VERSION || !format_matches,
             conn,
             index_dir: index_dir.to_path_buf(),
         })
@@ -153,7 +173,7 @@ impl MetaStore {
         Ok(())
     }
 
-    /// Read a document's frontmatter projection for query-time filters.
+    /// Read one document's frontmatter projection for query-time filters.
     pub fn frontmatter_for_path(&self, path: &str) -> Result<crate::model::Frontmatter> {
         let raw: String = self.conn.query_row(
             "SELECT frontmatter_json FROM documents WHERE path = ?1",
@@ -161,6 +181,49 @@ impl MetaStore {
             |row| row.get(0),
         )?;
         serde_json::from_str(&raw).map_err(|e| crate::error::AgentWikiError::Other(e.to_string()))
+    }
+
+    /// Aggregate tag usage across the ledger projection (dynamic `known_tags`
+    /// source; updated with every sync, so it must not be cached with the
+    /// rule fingerprint alone).
+    pub fn all_tags(&self) -> Result<std::collections::BTreeMap<String, usize>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT frontmatter_json FROM documents")?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        let mut counts = std::collections::BTreeMap::new();
+        for row in rows {
+            let raw: String = row?;
+            let Ok(fm) = serde_json::from_str::<crate::model::Frontmatter>(&raw) else {
+                continue;
+            };
+            if let Some(serde_json::Value::Array(tags)) = fm.get("tags") {
+                for tag in tags.iter().filter_map(|v| v.as_str()) {
+                    *counts.entry(tag.to_string()).or_insert(0) += 1;
+                }
+            }
+        }
+        Ok(counts)
+    }
+
+    /// Ledger fingerprint of one document (for display timestamps).
+    pub fn ledger_fingerprint(&self, path: &str) -> Result<crate::model::Fingerprint> {
+        use rusqlite::OptionalExtension;
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT content_hash, mtime_ns, size FROM documents WHERE path = ?1",
+                [path],
+                |r| {
+                    Ok(crate::model::Fingerprint {
+                        content_hash: r.get(0)?,
+                        mtime_ns: r.get(1)?,
+                        size: r.get::<_, i64>(2)? as u64,
+                    })
+                },
+            )
+            .optional()?
+            .unwrap_or_default())
     }
 
     /// Replace the one-hop edge projection for a document.
@@ -202,6 +265,17 @@ impl MetaStore {
                 |r| r.get::<_, String>(0),
             )
             .or_else(|_| Ok(String::new()))
+    }
+
+    /// Persist the retrieval projection format version. Only written after a
+    /// sync/rebuild round confirms the projection, so a stale marker keeps
+    /// forcing the full rebuild (idempotent).
+    pub fn set_retrieval_format(&self, version: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO index_meta (key, value) VALUES ('retrieval_format', ?1)",
+            [version],
+        )?;
+        Ok(())
     }
 
     /// Clear every derived projection (document ledger + edges + vectors).
@@ -257,9 +331,22 @@ impl MetaStore {
 
     /// Read the outgoing edges declared by one document (one hop).
     pub fn edges_for_path(&self, path: &str) -> Result<Vec<Edge>> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT from_path, relation_type, to_path, section_source, status FROM edges WHERE from_path = ?1")?;
+        self.edges_like(
+            "SELECT from_path, relation_type, to_path, section_source, status FROM edges WHERE from_path = ?1",
+            path,
+        )
+    }
+
+    /// Read the incoming edges pointing at one document (one hop, inverse).
+    pub fn edges_to_path(&self, path: &str) -> Result<Vec<Edge>> {
+        self.edges_like(
+            "SELECT from_path, relation_type, to_path, section_source, status FROM edges WHERE to_path = ?1",
+            path,
+        )
+    }
+
+    fn edges_like(&self, sql: &str, path: &str) -> Result<Vec<Edge>> {
+        let mut stmt = self.conn.prepare(sql)?;
         let rows = stmt.query_map([path], |r| {
             Ok(Edge {
                 from: PathScope(camino::Utf8PathBuf::from(r.get::<_, String>(0)?)),
@@ -272,6 +359,28 @@ impl MetaStore {
                     .expect("EdgeStatus FromStr is infallible"),
             })
         })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    /// Display title of one document from the titles projection.
+    pub fn title_for(&self, path: &str) -> Result<Option<String>> {
+        use rusqlite::OptionalExtension;
+        Ok(self
+            .conn
+            .query_row("SELECT title FROM titles WHERE path = ?1", [path], |r| {
+                r.get(0)
+            })
+            .optional()?)
+    }
+
+    /// All (path, title) pairs from the titles projection (exact-match leg).
+    pub fn all_titles(&self) -> Result<Vec<(String, String)>> {
+        let mut stmt = self.conn.prepare("SELECT path, title FROM titles")?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
         let mut out = Vec::new();
         for row in rows {
             out.push(row?);
@@ -336,5 +445,33 @@ impl std::str::FromStr for EdgeStatus {
             "resolved" => Ok(EdgeStatus::Resolved),
             _ => Ok(EdgeStatus::Unresolved),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn idx_dir() -> (tempfile::TempDir, camino::Utf8PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = camino::Utf8PathBuf::from_path_buf(dir.path().to_path_buf()).unwrap();
+        (dir, path)
+    }
+
+    #[test]
+    fn retrieval_format_mismatch_marks_full_rebuild() {
+        let (_t, path) = idx_dir();
+        // Fresh store has no format marker yet -> one rebuild round expected.
+        let store = MetaStore::open(&path).unwrap();
+        assert!(store.needs_rebuild);
+
+        // Confirming the current format clears the flag for the next open.
+        store.set_retrieval_format(RETRIEVAL_FORMAT).unwrap();
+        assert!(!MetaStore::open(&path).unwrap().needs_rebuild);
+
+        // A stale/different format (e.g. tokenizer change) forces rebuild.
+        let store = MetaStore::open(&path).unwrap();
+        store.set_retrieval_format("fts-simple-v0").unwrap();
+        assert!(MetaStore::open(&path).unwrap().needs_rebuild);
     }
 }

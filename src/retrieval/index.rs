@@ -3,12 +3,14 @@ use crate::error::Result;
 use crate::model::{ContextQuery, PathScope, RankedSlice, Slice};
 use arrow_array::types::Float32Type;
 use arrow_array::{
-    ArrayRef, FixedSizeListArray, Int32Array, RecordBatch, RecordBatchIterator, StringArray,
+    ArrayRef, FixedSizeListArray, Float32Array, Int32Array, RecordBatch, RecordBatchIterator,
+    StringArray,
 };
 use arrow_schema::{DataType, Field, Schema};
 use camino::Utf8Path;
 use futures::TryStreamExt;
 use lance_index::scalar::FullTextSearchQuery;
+use lance_index::scalar::inverted::Language;
 use lancedb::index::Index;
 use lancedb::index::scalar::FtsIndexBuilder;
 use lancedb::query::{ExecutableQuery, QueryBase, Select};
@@ -16,6 +18,12 @@ use lancedb::{Connection, Table, connect};
 use std::sync::Arc;
 
 const TABLE: &str = "chunks";
+
+/// Lance FTS tokenizer for Chinese text, segmented with the bundled jieba
+/// dictionary lookup (see [`ensure_language_model`]).
+const FTS_TOKENIZER: &str = "jieba/default";
+/// Dictionary path relative to the Lance language-model home directory.
+const JIEBA_DICT_REL: &str = "jieba/default/dict.txt";
 
 pub struct LanceIndex {
     runtime: Arc<tokio::runtime::Runtime>,
@@ -26,6 +34,7 @@ pub struct LanceIndex {
 
 impl LanceIndex {
     pub fn open(index_dir: &Utf8Path, _vector_dims: Option<usize>) -> Result<Self> {
+        ensure_language_model()?;
         let path = index_dir.join("lancedb");
         std::fs::create_dir_all(&path).map_err(|e| crate::error::AgentWikiError::Io {
             path: path.clone(),
@@ -193,6 +202,7 @@ impl LanceIndex {
                     "section".into(),
                     "content".into(),
                     "source_hash".into(),
+                    "_distance".into(),
                 ]))
                 .limit(limit)
                 .execute()
@@ -228,19 +238,31 @@ impl LanceIndex {
                     .ok_or_else(|| {
                         crate::error::AgentWikiError::Index("missing source_hash".into())
                     })?;
+                // LanceDB reports raw (L2) distance in `_distance`; convert to
+                // a bounded similarity and apply the calibrated semantic floor
+                // so unrelated queries are not reported as hits (GAP-12).
+                let distances = batch
+                    .column_by_name("_distance")
+                    .and_then(|c| c.as_any().downcast_ref::<Float32Array>())
+                    .ok_or_else(|| {
+                        crate::error::AgentWikiError::Index("missing _distance".into())
+                    })?;
                 for i in 0..batch.num_rows() {
-                    out.push(RankedSlice {
-                        slice: Slice {
-                            path: PathScope(paths.value(i).into()),
-                            chunk_id: ids.value(i).into(),
-                            ordinal: i as u32,
-                            section: sections.value(i).into(),
-                            content: contents.value(i).into(),
-                            source_hash: hashes.value(i).into(),
-                        },
-                        score: 1.0 / (i as f64 + 1.0),
-                        sources: vec!["semantic".into()],
-                    });
+                    let score = 1.0 / (1.0 + f64::from(distances.value(i)));
+                    if score >= query.min_similarity {
+                        out.push(RankedSlice {
+                            slice: Slice {
+                                path: PathScope(paths.value(i).into()),
+                                chunk_id: ids.value(i).into(),
+                                ordinal: i as u32,
+                                section: sections.value(i).into(),
+                                content: contents.value(i).into(),
+                                source_hash: hashes.value(i).into(),
+                            },
+                            score,
+                            sources: vec!["semantic".into()],
+                        });
+                    }
                 }
             }
             Ok(out)
@@ -398,13 +420,60 @@ async fn open_or_create(db: &Connection) -> lancedb::Result<Table> {
                 RecordBatchIterator::new(vec![Ok(empty)].into_iter(), schema.clone()),
             );
             let table = db.create_table(TABLE, reader).execute().await?;
+            // Chinese text must be segmented, not split on whitespace: the
+            // default `simple` tokenizer treats a whole sentence as one token
+            // and query terms never match. `jieba` is dictionary-backed and
+            // works offline via the language-model directory.
+            // `Language` only drives stemming/stop-words and is ignored for
+            // jieba; the default `English` is harmless here.
+            let fts = FtsIndexBuilder::new(FTS_TOKENIZER.to_string(), Language::English);
             table
-                .create_index(&["content"], Index::FTS(FtsIndexBuilder::default()))
+                .create_index(&["content"], Index::FTS(fts))
                 .execute()
                 .await?;
             Ok(table)
         }
     }
+}
+
+/// The Lance FTS jieba tokenizer loads its dictionary from a language-model
+/// directory: `$LANCE_LANGUAGE_MODEL_HOME`, or the platform data directory
+/// `lance/language_models` by default. The dictionary is not bundled with the
+/// crates, so verify it is present before creating any FTS index and report a
+/// precise, actionable error instead of a cryptic index-build failure.
+fn ensure_language_model() -> Result<()> {
+    let home = match std::env::var_os("LANCE_LANGUAGE_MODEL_HOME") {
+        Some(home) => camino::Utf8PathBuf::from_path_buf(home.into()).map_err(|p| {
+            crate::error::AgentWikiError::Config(format!(
+                "LANCE_LANGUAGE_MODEL_HOME is not valid UTF-8: {p:?}"
+            ))
+        })?,
+        None => match dirs::data_local_dir() {
+            Some(dir) => {
+                let buf = dir.join("lance").join("language_models");
+                camino::Utf8PathBuf::from_path_buf(buf).map_err(|p| {
+                    crate::error::AgentWikiError::Config(format!(
+                        "data directory is not valid UTF-8: {p:?}"
+                    ))
+                })?
+            }
+            None => {
+                return Err(crate::error::AgentWikiError::Config(
+                    "no platform data directory; set LANCE_LANGUAGE_MODEL_HOME".into(),
+                ));
+            }
+        },
+    };
+    let dict = home.join(JIEBA_DICT_REL);
+    if dict.exists() {
+        return Ok(());
+    }
+    Err(crate::error::AgentWikiError::Config(format!(
+        "jieba dictionary not found at {dict}; download it from \
+         https://cdn.jsdelivr.net/gh/fxsjy/jieba@master/jieba/dict.txt and place it \
+         there (or point LANCE_LANGUAGE_MODEL_HOME at a directory containing \
+         {JIEBA_DICT_REL})"
+    )))
 }
 
 async fn open_or_create_vectors(db: &Connection, dims: usize) -> lancedb::Result<Table> {

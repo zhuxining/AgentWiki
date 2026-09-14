@@ -53,6 +53,9 @@ pub enum AgentWikiError {
     #[error("path escapes the wiki root: {0:?}")]
     PathOutsideRoot(Utf8PathBuf),
 
+    #[error("formatting conflict at {path}: file changed externally")]
+    FormatConflict { path: Utf8PathBuf },
+
     #[error("unknown error: {0}")]
     Other(String),
 }

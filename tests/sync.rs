@@ -79,8 +79,46 @@ fn no_answer_is_not_a_failure_and_queries_validate_scope() {
 fn nested_heading_without_parent_does_not_panic() {
     let slices = agentwiki::document::chunk_document(
         "",
-        "### Nested\n\nevidence\n",
+        "### Nested\n\n证据\n",
         &agentwiki::PathScope("a.md".into()),
     );
     assert_eq!(slices[0].section, "Nested");
+}
+
+#[test]
+fn rename_preserves_document_identity_and_counts_moved() {
+    let wiki = tempfile::tempdir().unwrap();
+    let index = tempfile::tempdir().unwrap();
+    std::fs::write(
+        wiki.path().join("old.md"),
+        "# Title\n\nmove evidence text\n",
+    )
+    .unwrap();
+    let mut runtime = Runtime::assemble(
+        Utf8Path::from_path(wiki.path()).unwrap(),
+        Utf8Path::from_path(index.path()).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(runtime.ensure_fresh().unwrap().indexed, 1);
+
+    // Rename with unchanged content: reported as one move, not delete+add.
+    std::fs::rename(wiki.path().join("old.md"), wiki.path().join("new.md")).unwrap();
+    let report = runtime.ensure_fresh().unwrap();
+    assert_eq!(
+        report.moved, 1,
+        "unique hash must pair as a move: {report:?}"
+    );
+    assert_eq!(report.indexed, 1);
+    assert_eq!(report.removed, 1);
+
+    // The moved document stays retrievable; a second sync is a no-op.
+    let result = runtime
+        .query(&ContextQuery {
+            query: "move evidence".into(),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(result.slices.len(), 1);
+    assert_eq!(result.slices[0].slice.path.0.as_str(), "new.md");
+    assert_eq!(runtime.ensure_fresh().unwrap().unchanged, 1);
 }
