@@ -46,7 +46,7 @@ pub fn format_markdown(source: &str) -> Result<Option<String>, String> {
 /// Apply a prepared format change only if both content and metadata still match.
 pub fn format_file(
     root: &camino::Utf8Path,
-    path: &crate::model::PathScope,
+    path: &crate::document::types::PathScope,
 ) -> crate::error::Result<bool> {
     use crate::error::AgentWikiError;
     use std::io::Write;

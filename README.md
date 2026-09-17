@@ -31,7 +31,7 @@ Markdown 文档库 + AGENTWIKI.md 规则
           CLI / MCP 三个工具
 ```
 
-单 Rust package，两个二进制入口；代码按 `document`、`retrieval`、`governance` 聚合。复用现成解析、切分、检索、推理和格式化组件，Runtime 统一持有资源。向量同步批处理，不维护后台队列或 watcher。
+单 Rust package，两个二进制入口；代码按 `document`、`projection`、`retrieval`、`governance` 聚合。复用现成解析、切分、检索、推理和格式化组件，AgentWiki 异步门面统一持有资源。向量同步批处理，不维护后台队列或 watcher。
 
 ## 当前入口
 
@@ -83,7 +83,7 @@ curl -L -o "$HOME/Library/Application Support/lance/language_models/jieba/defaul
 
 也可设置 `LANCE_LANGUAGE_MODEL_HOME=$PWD/lm`（该目录下需含 `jieba/default/dict.txt`）。分词器变更会触发投影自动全量重建。
 
-Wiki 根目录的 `AGENTWIKI.md` 是唯一规则与 Agent 指导入口，不进入普通文档索引。Runtime 缺失时写入默认模板，已存在时不覆盖；CLI 与 MCP 共用 Runtime。必填字段由规则声明，系统不内置必填字段。
+Wiki 根目录的 `AGENTWIKI.md` 是唯一规则与 Agent 指导入口，不进入普通文档索引。AgentWiki 门面在文件缺失时写入默认模板，已存在时不覆盖；CLI 与 MCP 共用同一异步用例层。必填字段由规则声明，系统不内置必填字段。
 
 ## 开发与文档
 

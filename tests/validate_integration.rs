@@ -7,7 +7,9 @@
 
 use std::collections::HashSet;
 
-use agentwiki::model::{Issue, PathScope, Severity};
+use agentwiki::{
+    AgentWiki, Issue, OpenOptions, PathScope, Severity, ValidationRequest, ValidationScope,
+};
 
 const RULES: &str = r#"---
 name: Test Wiki
@@ -66,8 +68,30 @@ fn kinds_of(issues: &[Issue]) -> HashSet<&str> {
     issues.iter().map(|i| i.kind.as_str()).collect()
 }
 
-#[test]
-fn clean_wiki_passes_all_rule_checks() {
+async fn validate(root: &camino::Utf8Path, scope: Option<&PathScope>) -> Vec<Issue> {
+    let projection = tempfile::tempdir().unwrap();
+    let app = AgentWiki::open(OpenOptions {
+        wiki_root: root.to_path_buf(),
+        projection_dir: camino::Utf8PathBuf::from_path_buf(projection.path().to_path_buf())
+            .unwrap(),
+        embedding_model: None,
+    })
+    .await
+    .unwrap();
+    app.validate(ValidationRequest {
+        scope: scope
+            .cloned()
+            .map(ValidationScope::Document)
+            .unwrap_or(ValidationScope::All),
+        fix_format: false,
+    })
+    .await
+    .unwrap()
+    .issues
+}
+
+#[tokio::test]
+async fn clean_wiki_passes_all_rule_checks() {
     let dir = tempfile::tempdir().unwrap();
     let root = write_wiki(
         dir.path(),
@@ -79,14 +103,14 @@ fn clean_wiki_passes_all_rule_checks() {
             ),
         ],
     );
-    let issues = agentwiki::validate::validate_wiki(&root, None).unwrap();
+    let issues = validate(&root, None).await;
     // `guide` is the canonical tag; the cross link resolves; every required
     // field is present.
     assert!(issues.is_empty(), "expected a clean wiki, got: {issues:?}");
 }
 
-#[test]
-fn rule_violations_report_kinds_and_severity() {
+#[tokio::test]
+async fn rule_violations_report_kinds_and_severity() {
     let dir = tempfile::tempdir().unwrap();
     let root = write_wiki(
         dir.path(),
@@ -111,7 +135,7 @@ fn rule_violations_report_kinds_and_severity() {
             ),
         ],
     );
-    let issues = agentwiki::validate::validate_wiki(&root, None).unwrap();
+    let issues = validate(&root, None).await;
     let kinds = kinds_of(&issues);
 
     // Required: root (type) + decisions section (status, decided_at).
@@ -147,8 +171,8 @@ fn rule_violations_report_kinds_and_severity() {
     }
 }
 
-#[test]
-fn single_document_mode_skips_new_tag_but_checks_own_links() {
+#[tokio::test]
+async fn single_document_mode_skips_new_tag_but_checks_own_links() {
     let dir = tempfile::tempdir().unwrap();
     let root = write_wiki(
         dir.path(),
@@ -158,25 +182,25 @@ fn single_document_mode_skips_new_tag_but_checks_own_links() {
         )],
     );
     let path = PathScope(camino::Utf8PathBuf::from("notes/only.md"));
-    let issues = agentwiki::validate::validate_wiki(&root, Some(&path)).unwrap();
+    let issues = validate(&root, Some(&path)).await;
     let kinds = kinds_of(&issues);
     // Whole-archive judgment (tags.new) is skipped; own broken link is kept.
     assert!(!kinds.contains("tags.new"), "{issues:?}");
     assert!(kinds.contains("link.broken"), "{issues:?}");
     // Full-archive mode flags the tag as new.
-    let issues = agentwiki::validate::validate_wiki(&root, None).unwrap();
+    let issues = validate(&root, None).await;
     assert!(kinds_of(&issues).contains("tags.new"), "{issues:?}");
 }
 
-#[test]
-fn broken_rule_file_never_misreports_required_fields() {
+#[tokio::test]
+async fn broken_rule_file_never_misreports_required_fields() {
     let dir = tempfile::tempdir().unwrap();
     let root = write_wiki_or_rules(
         dir.path(),
         "---\nrequired_fields: [title]\ntitlee: typo\n---\n",
         &[("notes/a.md", "# 无 frontmatter\n\n正文\n")],
     );
-    let issues = agentwiki::validate::validate_wiki(&root, None).unwrap();
+    let issues = validate(&root, None).await;
     assert_eq!(issues.len(), 1);
     assert_eq!(issues[0].kind, "rules.parse");
     assert_eq!(issues[0].path, "AGENTWIKI.md");

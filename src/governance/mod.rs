@@ -2,4 +2,5 @@
 
 pub mod format;
 pub mod rules;
+pub mod types;
 pub mod validate;

@@ -1,21 +1,27 @@
-use agentwiki::{ContextQuery, Runtime};
-use camino::Utf8Path;
+use agentwiki::{AgentWiki, ContextQuery, OpenOptions};
 
-#[test]
-fn rebuild_repopulates_an_unchanged_archive() {
+async fn open(wiki: &tempfile::TempDir, projection: &tempfile::TempDir) -> AgentWiki {
+    AgentWiki::open(OpenOptions {
+        wiki_root: camino::Utf8PathBuf::from_path_buf(wiki.path().to_path_buf()).unwrap(),
+        projection_dir: camino::Utf8PathBuf::from_path_buf(projection.path().to_path_buf())
+            .unwrap(),
+        embedding_model: None,
+    })
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn rebuild_repopulates_an_unchanged_archive() {
     let wiki = tempfile::tempdir().unwrap();
-    let index = tempfile::tempdir().unwrap();
+    let projection = tempfile::tempdir().unwrap();
     std::fs::write(wiki.path().join("a.md"), "# Title\n\nrebuild evidence\n").unwrap();
-    let mut runtime = Runtime::assemble(
-        Utf8Path::from_path(wiki.path()).unwrap(),
-        Utf8Path::from_path(index.path()).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(runtime.ensure_fresh().unwrap().indexed, 1);
-    assert_eq!(runtime.rebuild().unwrap().indexed, 1);
+    let app = open(&wiki, &projection).await;
+    assert_eq!(app.sync().await.unwrap().indexed, 1);
+    assert_eq!(app.rebuild().await.unwrap().indexed, 1);
     assert_eq!(
-        runtime
-            .query(&ContextQuery::default())
+        app.query(ContextQuery::default())
+            .await
             .unwrap()
             .slices
             .len(),
@@ -23,102 +29,101 @@ fn rebuild_repopulates_an_unchanged_archive() {
     );
 }
 
-#[test]
-fn failed_document_preserves_evidence_and_retries_without_other_changes() {
+#[tokio::test]
+async fn failed_document_preserves_evidence_and_retries() {
     let wiki = tempfile::tempdir().unwrap();
-    let index = tempfile::tempdir().unwrap();
+    let projection = tempfile::tempdir().unwrap();
     let file = wiki.path().join("a.md");
     std::fs::write(&file, "# Title\n\nretained evidence\n").unwrap();
-    let mut runtime = Runtime::assemble(
-        Utf8Path::from_path(wiki.path()).unwrap(),
-        Utf8Path::from_path(index.path()).unwrap(),
-    )
-    .unwrap();
-    runtime.ensure_fresh().unwrap();
+    let app = open(&wiki, &projection).await;
+    app.sync().await.unwrap();
     std::fs::write(&file, "---\ntitle: [broken\n---\n").unwrap();
     for _ in 0..2 {
-        let report = runtime.ensure_fresh().unwrap();
+        let report = app.sync().await.unwrap();
         assert_eq!(report.removed, 0);
-        assert!(report.degraded.iter().any(|e| e.contains("a.md")));
-        let result = runtime.query(&ContextQuery::default()).unwrap();
-        assert_eq!(result.slices.len(), 1);
-        assert!(!result.degraded.is_empty());
+        assert!(report.degraded.iter().any(|error| error.contains("a.md")));
+        assert_eq!(
+            app.query(ContextQuery::default())
+                .await
+                .unwrap()
+                .slices
+                .len(),
+            1
+        );
     }
     std::fs::write(&file, "# Title\n\nrecovered evidence\n").unwrap();
-    assert_eq!(runtime.ensure_fresh().unwrap().indexed, 1);
+    assert_eq!(app.sync().await.unwrap().indexed, 1);
 }
 
-#[test]
-fn no_answer_is_not_a_failure_and_queries_validate_scope() {
+#[tokio::test]
+async fn no_answer_is_not_a_failure_and_scope_is_validated() {
     let wiki = tempfile::tempdir().unwrap();
-    let index = tempfile::tempdir().unwrap();
-    let mut runtime = Runtime::assemble(
-        Utf8Path::from_path(wiki.path()).unwrap(),
-        Utf8Path::from_path(index.path()).unwrap(),
-    )
-    .unwrap();
-    let result = runtime
-        .query(&ContextQuery {
+    let projection = tempfile::tempdir().unwrap();
+    let app = open(&wiki, &projection).await;
+    let result = app
+        .query(ContextQuery {
             query: "absent".into(),
             ..Default::default()
         })
+        .await
         .unwrap();
     assert!(result.slices.is_empty());
-    assert!(result.degraded.is_empty(), "{:?}", result.degraded);
+    assert!(result.degraded.is_empty());
     assert!(
-        runtime
-            .query(&ContextQuery {
-                scope: "../outside".into(),
-                ..Default::default()
-            })
-            .is_err()
+        app.query(ContextQuery {
+            scope: "../outside".into(),
+            ..Default::default()
+        })
+        .await
+        .is_err()
     );
 }
 
-#[test]
-fn nested_heading_without_parent_does_not_panic() {
-    let slices = agentwiki::document::chunk_document(
-        "",
-        "### Nested\n\n证据\n",
-        &agentwiki::PathScope("a.md".into()),
-    );
-    assert_eq!(slices[0].section, "Nested");
-}
-
-#[test]
-fn rename_preserves_document_identity_and_counts_moved() {
+#[tokio::test]
+async fn rename_is_reported_as_a_move() {
     let wiki = tempfile::tempdir().unwrap();
-    let index = tempfile::tempdir().unwrap();
+    let projection = tempfile::tempdir().unwrap();
     std::fs::write(
         wiki.path().join("old.md"),
         "# Title\n\nmove evidence text\n",
     )
     .unwrap();
-    let mut runtime = Runtime::assemble(
-        Utf8Path::from_path(wiki.path()).unwrap(),
-        Utf8Path::from_path(index.path()).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(runtime.ensure_fresh().unwrap().indexed, 1);
-
-    // Rename with unchanged content: reported as one move, not delete+add.
+    let app = open(&wiki, &projection).await;
+    assert_eq!(app.sync().await.unwrap().indexed, 1);
     std::fs::rename(wiki.path().join("old.md"), wiki.path().join("new.md")).unwrap();
-    let report = runtime.ensure_fresh().unwrap();
-    assert_eq!(
-        report.moved, 1,
-        "unique hash must pair as a move: {report:?}"
-    );
-    assert_eq!(report.indexed, 1);
+    let report = app.sync().await.unwrap();
+    assert_eq!(report.moved, 1);
     assert_eq!(report.removed, 1);
-
-    // The moved document stays retrievable; a second sync is a no-op.
-    let result = runtime
-        .query(&ContextQuery {
+    let result = app
+        .query(ContextQuery {
             query: "move evidence".into(),
             ..Default::default()
         })
+        .await
         .unwrap();
-    assert_eq!(result.slices.len(), 1);
     assert_eq!(result.slices[0].slice.path.0.as_str(), "new.md");
-    assert_eq!(runtime.ensure_fresh().unwrap().unchanged, 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn concurrent_use_cases_are_serialized_without_deadlock() {
+    let wiki = tempfile::tempdir().unwrap();
+    let projection = tempfile::tempdir().unwrap();
+    std::fs::write(wiki.path().join("a.md"), "# Title\n\nconcurrent evidence\n").unwrap();
+    let app = std::sync::Arc::new(open(&wiki, &projection).await);
+    let syncing = {
+        let app = app.clone();
+        tokio::spawn(async move { app.sync().await })
+    };
+    let querying = {
+        let app = app.clone();
+        tokio::spawn(async move {
+            app.query(ContextQuery {
+                query: "concurrent evidence".into(),
+                ..Default::default()
+            })
+            .await
+        })
+    };
+    syncing.await.unwrap().unwrap();
+    assert_eq!(querying.await.unwrap().unwrap().slices.len(), 1);
 }

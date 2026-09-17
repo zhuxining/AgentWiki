@@ -1,6 +1,6 @@
 //! CLI composition root (binary `agentwiki`).
 //!
-//! Reads the user config (`~/.agentwiki/config.json`), assembles a [`Runtime`]
+//! Reads the user config (`~/.agentwiki/config.json`), assembles [`AgentWiki`]
 //! and routes subcommands: query, sync-index, rebuild-index, validate-wiki.
 //! Only this root reads global config; library modules receive parsed values.
 
@@ -8,7 +8,9 @@ use camino::Utf8PathBuf;
 use clap::{Parser, Subcommand};
 
 use agentwiki::config::AppConfig;
-use agentwiki::model::ContextQuery;
+use agentwiki::{
+    AgentWiki, ContextQuery, OpenOptions, PathScope, Severity, ValidationRequest, ValidationScope,
+};
 
 /// Subcommand routing.
 #[derive(Parser)]
@@ -68,15 +70,16 @@ enum Command {
     ShowConfig,
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     // Application boundary: convert library errors to a concise exit path.
-    if let Err(e) = run() {
+    if let Err(e) = run().await {
         eprintln!("error: {e:#}");
         std::process::exit(1);
     }
 }
 
-fn run() -> anyhow::Result<()> {
+async fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     let cfg = AppConfig::load()?;
@@ -87,14 +90,12 @@ fn run() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // Ensure the wiki root exists before assembly (runtime seeds AGENTWIKI.md).
-    std::fs::create_dir_all(&root).map_err(|e| anyhow::anyhow!("create root {root}: {e}"))?;
-
-    let mut rt = agentwiki::Runtime::assemble_with_embedding(
-        &root,
-        &cfg.projection_for_root(&root)?,
-        cfg.embedding_model.as_deref(),
-    )?;
+    let wiki = AgentWiki::open(OpenOptions {
+        wiki_root: root.clone(),
+        projection_dir: cfg.projection_for_root(&root)?,
+        embedding_model: cfg.embedding_model.clone(),
+    })
+    .await?;
 
     match cli.command {
         Command::Query {
@@ -106,7 +107,7 @@ fn run() -> anyhow::Result<()> {
             metadata,
         } => {
             // Prefer to serve a fresh projection on-demand.
-            let mut metadata_filters = agentwiki::model::Frontmatter::new();
+            let mut metadata_filters = serde_json::Map::new();
             for pair in &metadata {
                 let Some((key, value)) = pair.split_once('=') else {
                     anyhow::bail!("--metadata expects KEY=VALUE, got `{pair}`");
@@ -124,7 +125,7 @@ fn run() -> anyhow::Result<()> {
                 metadata_filters,
                 ..Default::default()
             };
-            let res = rt.query(&q)?;
+            let res = wiki.query(q).await?;
             for hit in &res.slices {
                 let title = hit.slice.section.clone();
                 println!(
@@ -142,11 +143,11 @@ fn run() -> anyhow::Result<()> {
             println!("{} hits; degraded={}", res.slices.len(), res.degraded.len());
         }
         Command::SyncIndex => {
-            let report = rt.ensure_fresh()?;
+            let report = wiki.sync().await?;
             print_report(&report);
         }
         Command::RebuildIndex => {
-            let report = rt.rebuild()?;
+            let report = wiki.rebuild().await?;
             print_report(&report);
         }
         Command::ValidateWiki {
@@ -161,14 +162,12 @@ fn run() -> anyhow::Result<()> {
                 anyhow::bail!("--path and --full are mutually exclusive");
             }
             let scope = match path {
-                Some(p) => {
-                    let scope =
-                        agentwiki::document::scope_path(&root, &camino::Utf8PathBuf::from(&p))?;
-                    Some(scope)
-                }
-                None => None,
+                Some(path) => ValidationScope::Document(PathScope(path.into())),
+                None => ValidationScope::All,
             };
-            let result = rt.validate_with_format(scope.as_ref(), scope.is_none(), fix_format)?;
+            let result = wiki
+                .validate(ValidationRequest { scope, fix_format })
+                .await?;
             for path in result.formatted_paths {
                 println!("formatted {path}");
             }
@@ -178,8 +177,8 @@ fn run() -> anyhow::Result<()> {
             } else {
                 for i in issues {
                     let level = match i.severity {
-                        agentwiki::model::Severity::Error => "ERROR",
-                        agentwiki::model::Severity::Warning => "WARNING",
+                        Severity::Error => "ERROR",
+                        Severity::Warning => "WARNING",
                     };
                     println!("{level} {}:{} {i}", i.kind, i.path);
                 }
@@ -229,7 +228,7 @@ fn snippet(content: &str) -> String {
     }
 }
 
-fn print_report(r: &agentwiki::model::SyncReport) {
+fn print_report(r: &agentwiki::SyncReport) {
     println!(
         "indexed={} removed={} moved={} unchanged={} vectors_pending={} degraded={}",
         r.indexed,

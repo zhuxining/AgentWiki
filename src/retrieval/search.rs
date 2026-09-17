@@ -12,9 +12,12 @@
 //! reranker aligns results by table-local row ids, which are not comparable
 //! across tables. The formula itself is the standard k=60 scoring.
 
+use crate::document::types::PathScope;
 use crate::error::Result;
-use crate::model::{ContextQuery, PathScope, RankedSlice, RelatedDocument, SearchResult};
-use crate::sync::SyncContext;
+use crate::projection::Projection;
+use crate::retrieval::types::{
+    ContextQuery, RankedSlice, RelatedDocument, SearchResult, SearchStrategy,
+};
 
 /// RRF constant (Cormack et al., 2009; k=60 near-optimal).
 const RRF_K: f64 = 60.0;
@@ -26,23 +29,25 @@ const RRF_K: f64 = 60.0;
 /// - an absent or unavailable semantic leg downgrades to keyword only;
 /// - exact title/path matches are promoted and marked `exact`;
 /// - related documents stop at one hop.
-pub fn run_query(ctx: &SyncContext, q: &ContextQuery) -> Result<SearchResult> {
+pub async fn run_query(ctx: &Projection, q: &ContextQuery) -> Result<SearchResult> {
     let mut degraded = Vec::new();
 
     // Empty queries are served from the ledger's real mtime ordering.
     let mut recent: Vec<RankedSlice> = Vec::new();
     if q.is_recent_request() {
+        let scope = q.scope.clone();
+        let limit = q.limit.clamp(1, 20);
         let paths = ctx
             .meta
-            .recent_paths(&q.scope, q.limit.clamp(1, 20))
+            .with(move |store| store.recent_paths(&scope, limit))
+            .await
             .unwrap_or_else(|e| {
                 degraded.push(format!("recent metadata unavailable: {e}"));
                 Vec::new()
             });
-        recent = paths
-            .iter()
-            .flat_map(|path| ctx.index.slices_for_path(path).unwrap_or_default())
-            .collect();
+        for path in paths {
+            recent.extend(ctx.index.slices_for_path(&path).await.unwrap_or_default());
+        }
     }
 
     // Non-empty queries: collect candidates per leg, then RRF-fuse.
@@ -51,26 +56,35 @@ pub fn run_query(ctx: &SyncContext, q: &ContextQuery) -> Result<SearchResult> {
     let mut exact: Vec<RankedSlice> = Vec::new();
     if !q.is_recent_request() {
         let semantic_expected = ctx.index.semantic_available();
-        keyword = ctx.index.search(q, semantic_expected).unwrap_or_else(|e| {
-            degraded.push(format!("search index unavailable: {e}"));
-            Vec::new()
-        });
-        exact = exact_matches(ctx, q);
+        keyword = ctx
+            .index
+            .search(q, semantic_expected)
+            .await
+            .unwrap_or_else(|e| {
+                degraded.push(format!("search index unavailable: {e}"));
+                Vec::new()
+            });
+        exact = exact_matches(ctx, q).await;
         if let Some(embedder) = &ctx.embedder {
-            match embedder.lock() {
-                Ok(mut embedder) => match embedder.embed(vec![q.query.clone()]) {
-                    Ok(vectors) if !vectors.is_empty() => {
-                        match ctx.index.vector_search(q, &vectors[0]) {
-                            Ok(mut found) => semantic.append(&mut found),
-                            Err(error) => {
-                                degraded.push(format!("vector search unavailable: {error}"))
-                            }
-                        }
+            let embedder = embedder.clone();
+            let input = q.query.clone();
+            let embedded = tokio::task::spawn_blocking(move || match embedder.lock() {
+                Ok(mut embedder) => embedder
+                    .embed(vec![input])
+                    .map_err(|error| format!("embedding unavailable: {error}")),
+                Err(error) => Err(format!("embedding lock unavailable: {error}")),
+            })
+            .await
+            .unwrap_or_else(|error| Err(format!("embedding task failed: {error}")));
+            match embedded {
+                Ok(vectors) if !vectors.is_empty() => {
+                    match ctx.index.vector_search(q, &vectors[0]).await {
+                        Ok(mut found) => semantic.append(&mut found),
+                        Err(error) => degraded.push(format!("vector search unavailable: {error}")),
                     }
-                    Ok(_) => degraded.push("embedding returned no vector".into()),
-                    Err(e) => degraded.push(format!("embedding unavailable: {e}")),
-                },
-                Err(e) => degraded.push(format!("embedding lock unavailable: {e}")),
+                }
+                Ok(_) => degraded.push("embedding returned no vector".into()),
+                Err(error) => degraded.push(error),
             }
         }
     }
@@ -117,9 +131,15 @@ pub fn run_query(ctx: &SyncContext, q: &ContextQuery) -> Result<SearchResult> {
     };
 
     if !q.tags.is_empty() || !q.note_types.is_empty() || !q.metadata_filters.is_empty() {
-        candidates.retain(|hit| {
-            let Ok(frontmatter) = ctx.meta.frontmatter_for_path(hit.slice.path.0.as_str()) else {
-                return false;
+        let mut filtered = Vec::with_capacity(candidates.len());
+        for hit in candidates {
+            let path = hit.slice.path.0.to_string();
+            let Ok(frontmatter) = ctx
+                .meta
+                .with(move |store| store.frontmatter_for_path(&path))
+                .await
+            else {
+                continue;
             };
             let tags_match = q.tags.iter().all(|wanted| {
                 frontmatter
@@ -136,8 +156,11 @@ pub fn run_query(ctx: &SyncContext, q: &ContextQuery) -> Result<SearchResult> {
                 .metadata_filters
                 .iter()
                 .all(|(key, expected)| frontmatter.get(key) == Some(expected));
-            tags_match && types_match && metadata_match
-        });
+            if tags_match && types_match && metadata_match {
+                filtered.push(hit);
+            }
+        }
+        candidates = filtered;
     }
 
     let mut per_document = std::collections::HashMap::new();
@@ -156,7 +179,7 @@ pub fn run_query(ctx: &SyncContext, q: &ContextQuery) -> Result<SearchResult> {
             continue;
         }
         seen.push(path_str.clone());
-        let rel = related_for(ctx, &path_str);
+        let rel = related_for(ctx, &path_str).await;
         if !rel.is_empty() {
             related.extend(rel);
             break; // only enrich the primary hit with its relations
@@ -166,7 +189,36 @@ pub fn run_query(ctx: &SyncContext, q: &ContextQuery) -> Result<SearchResult> {
     // Cap candidates at the requested limit.
     candidates.truncate(q.limit);
 
+    for hit in &mut candidates {
+        let path = hit.slice.path.0.to_string();
+        let (title, fingerprint, frontmatter) = ctx
+            .meta
+            .with(move |store| {
+                Ok((
+                    store.title_for(&path)?.unwrap_or_default(),
+                    store.ledger_fingerprint(&path)?,
+                    store.frontmatter_for_path(&path)?,
+                ))
+            })
+            .await?;
+        hit.title = title;
+        hit.modified_at_ns = fingerprint.mtime_ns;
+        hit.frontmatter = frontmatter;
+    }
+
+    let strategy = if q.is_recent_request() {
+        SearchStrategy::Recent
+    } else if candidates
+        .iter()
+        .any(|hit| hit.sources.iter().any(|source| source == "semantic"))
+    {
+        SearchStrategy::Hybrid
+    } else {
+        SearchStrategy::Keyword
+    };
+
     Ok(SearchResult {
+        strategy,
         slices: candidates,
         related,
         degraded,
@@ -176,18 +228,18 @@ pub fn run_query(ctx: &SyncContext, q: &ContextQuery) -> Result<SearchResult> {
 /// Exact-match candidates: documents whose title equals the query text
 /// (case-insensitive, trimmed). They rank at the top of the RRF fusion and
 /// carry the `exact` source. Bounded to the query limit.
-fn exact_matches(ctx: &SyncContext, q: &ContextQuery) -> Vec<RankedSlice> {
+async fn exact_matches(ctx: &Projection, q: &ContextQuery) -> Vec<RankedSlice> {
     if q.query.trim().is_empty() || q.query.chars().count() > 64 {
         return Vec::new();
     }
     let wanted = q.query.trim().to_lowercase();
-    let Ok(titles) = ctx.meta.all_titles() else {
+    let Ok(titles) = ctx.meta.with(|store| store.all_titles()).await else {
         return Vec::new();
     };
     let mut out = Vec::new();
     for (path, title) in titles {
         if title.to_lowercase() == wanted
-            && let Ok(slices) = ctx.index.slices_for_path(&path)
+            && let Ok(slices) = ctx.index.slices_for_path(&path).await
         {
             out.extend(slices.into_iter().take(q.limit.clamp(1, 20)));
         }
@@ -198,24 +250,36 @@ fn exact_matches(ctx: &SyncContext, q: &ContextQuery) -> Vec<RankedSlice> {
 /// One-hop related documents for a path, read from the metadata edge store
 /// (outgoing first, then incoming, at most five). Best-effort: misses degrade
 /// to an empty list, never an error.
-fn related_for(ctx: &SyncContext, path: &str) -> Vec<RelatedDocument> {
+async fn related_for(ctx: &Projection, path: &str) -> Vec<RelatedDocument> {
     let mut out = Vec::new();
-    let outgoing = ctx.meta.edges_for_path(path).unwrap_or_default();
-    let incoming = ctx.meta.edges_to_path(path).unwrap_or_default();
+    let path_owned = path.to_owned();
+    let outgoing = ctx
+        .meta
+        .with(move |store| store.edges_for_path(&path_owned))
+        .await
+        .unwrap_or_default();
+    let path_owned = path.to_owned();
+    let incoming = ctx
+        .meta
+        .with(move |store| store.edges_to_path(&path_owned))
+        .await
+        .unwrap_or_default();
     for edge in outgoing.into_iter().chain(incoming) {
         let from = edge.from.0.as_str();
         let direction = if from == path {
-            crate::model::RelationDirection::Outgoing
+            crate::retrieval::types::RelationDirection::Outgoing
         } else {
-            crate::model::RelationDirection::Incoming
+            crate::retrieval::types::RelationDirection::Incoming
         };
+        let target = edge.to.0.to_string();
         let title = ctx
             .meta
-            .title_for(edge.to.0.as_str())
+            .with(move |store| store.title_for(&target))
+            .await
             .ok()
             .flatten()
             .unwrap_or_default();
-        let context = section_context(ctx, &edge.from, &edge.section_source);
+        let context = section_context(ctx, &edge.from, &edge.section_source).await;
         out.push(RelatedDocument {
             path: edge.to,
             title,
@@ -234,8 +298,8 @@ fn related_for(ctx: &SyncContext, path: &str) -> Vec<RelatedDocument> {
 
 /// Recover the source text of the section that declared a relation, from the
 /// indexed slices of the declaring document (bounded; best-effort).
-fn section_context(ctx: &SyncContext, from: &PathScope, section: &str) -> String {
-    let Ok(slices) = ctx.index.slices_for_path(from.0.as_str()) else {
+async fn section_context(ctx: &Projection, from: &PathScope, section: &str) -> String {
+    let Ok(slices) = ctx.index.slices_for_path(from.0.as_str()).await else {
         return String::new();
     };
     slices

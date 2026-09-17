@@ -1,4 +1,4 @@
-//! Retrieval contracts and backend adapters.
-pub mod embedding;
-pub mod index;
-pub use index::LanceIndex;
+//! Retrieval policy and transport-neutral result contracts.
+
+pub(crate) mod search;
+pub mod types;

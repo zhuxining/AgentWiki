@@ -3,8 +3,9 @@
 //! `matches_section`/`matching_sections` 实现目录子树 + fnmatch 匹配
 //! （`*` 跨 `/`）；`effective_rules` 合并根规则与匹配 sections。
 
+use crate::document::types::Frontmatter;
 use crate::error::Result;
-use crate::model::{EffectiveRules, Frontmatter, Rule, RuleSection};
+use crate::governance::types::{EffectiveRules, Rule, RuleSection};
 use globset::GlobBuilder;
 
 /// Decode rule-file frontmatter into a [`Rule`], applying contract defaults

@@ -12,11 +12,11 @@ HTTP API、云同步、Web UI、查询 LLM、实体自动抽取和操作审计�
 
 | 部分 | 当前状态与差距 |
 | --- | --- |
-| CLI / 配置 | `src/bin/agentwiki.rs` 已有命令路由和配置加载；模型配置可驱动可选语义索引 |
+| CLI / 配置 | `src/cli.rs` 已有命令路由和配置加载；模型配置可驱动可选语义索引 |
 | Markdown / 规则 / 校验 | 已接入 pulldown-cmark、text-splitter、globset、dprint；格式修复仍需显式 `--fix-format` |
 | 同步 / SQLite / 图谱 | 已有同步流程和元数据表；扫描会读取全部文档，变化文档重复读取；移动计数恒为零，解析错误隔离、重试与关系解析仍需补齐 |
 | 检索 | LanceDB 已接入切片表、FTS 索引、作用域过滤和关键词查询；配置 embedding model 后建立向量表并追加语义候选 |
-| MCP | `src/bin/agentwiki-mcp.rs` 已用 rmcp 3.3 提供三个 stdio 工具 |
+| MCP | `src/mcp.rs` 已用 rmcp 3.3 提供三个 stdio 工具 |
 | 语义 / 格式修复 | FastEmbed 已接入同步与 LanceDB 向量投影；默认关闭模型，格式修复提供 CLI 显式入口 |
 
 旧 Python 实现保留在 `legacy/python/`，不恢复维护。LanceDB 0.38 的本地构建需要 `protoc`，CI 与开发环境应预装并通过 `PROTOC` 指定。
@@ -56,29 +56,35 @@ LanceDB 的 Rust 依赖链会编译 Protocol Buffers schema，开发机和 CI �
 ```text
 src/
 ├── lib.rs                 # 公共 API 与模块声明
+├── app.rs                 # AgentWiki 异步门面、资源和并发控制
 ├── config.rs              # 配置加载、默认值、路径解析
-├── runtime.rs             # 唯一资源所有者与公共用例入口
 ├── error.rs               # 统一错误类型
-├── bin/
-│   ├── agentwiki.rs       # CLI
-│   └── agentwiki-mcp.rs   # MCP，mcp feature
+├── cli.rs                 # agentwiki 二进制入口
+├── mcp.rs                 # agentwiki-mcp，mcp feature
 ├── document/
-│   ├── mod.rs             # Document、Chunk、读取入口
+│   ├── mod.rs
+│   ├── types.rs           # 文档、路径、指纹、切片和关系
 │   ├── path.rs            # 受约束相对路径、安全检查、扫描
-│   ├── parse.rs           # Frontmatter、标题、链接、源位置
-│   └── chunk.rs           # 章节归属、切分器接线
-├── retrieval/
-│   ├── mod.rs             # 查询/结果类型、策略、证据组织
-│   ├── index.rs           # LanceDB 唯一边界
+│   ├── parse.rs           # Frontmatter、标题、读取
+│   ├── chunk.rs           # 章节归属、切分器接线
+│   └── relation.rs        # 显式一跳关系提取
+├── projection/
+│   ├── mod.rs             # 可重建投影资源束
+│   ├── types.rs           # 同步报告
+│   ├── sync.rs            # 增量同步、重建、重试
+│   ├── metadata.rs        # SQLite 元数据
+│   ├── lance.rs           # LanceDB 唯一边界
 │   └── embedding.rs       # FastEmbed 唯一边界
+├── retrieval/
+│   ├── mod.rs
+│   ├── types.rs           # 查询与结果契约
+│   └── search.rs          # 融合策略与证据组织
 ├── governance/
-│   ├── mod.rs             # 规则获取、校验与修复入口
-│   ├── rules.rs           # 规则类型、解析、匹配、合并
+│   ├── mod.rs
+│   ├── types.rs           # 规则与校验契约
+│   ├── rules.rs           # 解析、匹配、合并
 │   ├── validate.rs        # 问题类型与确定性检查
 │   └── format.rs          # dprint 接线与显式格式写回
-├── sync.rs                # 增量同步、重建、重试
-├── storage.rs             # SQLite 元数据
-└── graph.rs               # 一跳文档关系
 
 tests/
 ├── retrieval.rs
@@ -90,25 +96,25 @@ tests/
 单元测试留在模块内，公共跨模块行为放在 tests，固定小型 Markdown 文档放在 fixtures。文档继续使用现有 README、AGENTS 和 docs 文件，不新增平行设计入口。
 
 ```text
-CLI / MCP → Runtime
-              ├─ sync → document / graph / retrieval / storage
-              ├─ retrieval → LanceDB / FastEmbed，附加 SQLite 关系
+CLI / MCP → AgentWiki
+              ├─ projection → document / LanceDB / FastEmbed / SQLite
+              ├─ retrieval → projection，附加 SQLite 关系
               └─ governance → document / rules / format
 ```
 
-- Runtime 统一持有 Wiki 根目录和一个 SyncContext 资源束；SyncContext 只在 Runtime 装配时创建，不重复打开索引或 SQLite。
-- sync、检索与治理通过 Runtime 的用例入口访问资源，底层适配器仍保持独立边界。
-- LanceDB/Arrow 类型只出现在 retrieval/index，FastEmbed 类型只出现在 embedding，SQLite 连接只出现在 storage。
-- model 保留跨模块共享的纯契约类型；Document、Slice、查询/结果和规则问题按使用域组织，类型不依赖第三方 I/O 或协议 SDK。
+- AgentWiki 统一持有 Wiki 根目录和一个 Projection 资源束；Projection 只在 AgentWiki 装配时创建。
+- 用例接口为 async；LanceDB 使用原生异步 API，SQLite、FastEmbed、格式化和同步解析通过阻塞任务隔离。
+- LanceDB/Arrow、FastEmbed 和 SQLite 类型分别限制在 projection/lance、embedding、metadata。
+- 类型按使用域组织，不建立中央 model 模块；领域类型不依赖协议 SDK。
 - lib 只导出实际调用者需要的公共 API，不全量公开内部模块或数据库行结构。
-- graph 复用解析出的链接和章节，validate 复用同一文档表示，不重复扫描或解析。
+- relation 复用解析出的链接和章节，validate 复用同一文档表示，不重复扫描或解析。
 - config 只在入口加载，业务模块接收已解析参数；同步文件 I/O、SQLite 和模型推理不阻塞 Tokio executor，阻塞任务需限制并发并等待完成。
 
 ## 4. 数据与运行行为
 
 ### 4.1 规则与配置
 
-Wiki 根目录的 `AGENTWIKI.md` 是唯一组织规则入口：Frontmatter 是结构化规则，正文作为 guide_content 返回，不作为普通文档索引。Runtime 创建缺失模板，已存在文件不覆盖。模板自举与显式格式修复是应用写 Markdown 的两个限定场景。
+Wiki 根目录的 `AGENTWIKI.md` 是唯一组织规则入口：Frontmatter 是结构化规则，正文作为 guide_content 返回，不作为普通文档索引。AgentWiki 创建缺失模板，已存在文件不覆盖。模板自举与显式格式修复是应用写 Markdown 的两个限定场景。
 
 配置继续使用 `~/.agentwiki/config.json`，仅保留 wiki_root 和 embedding_model。默认根目录 `~/AgentWiki`，模型默认 null；CLI 显式根目录优先于配置，配置相对路径以配置目录为基准。业务不读取环境变量配置，第三方缓存和模型路径尽量通过构造参数传递。
 
@@ -169,15 +175,14 @@ SQLite 不做全文或向量检索；LanceDB 与 SQLite 没有跨库事务。写
 
 | 当前实现 | 结构说明 |
 | --- | --- |
-| src/bin/agentwiki.rs、src/bin/agentwiki-mcp.rs | 两个二进制入口；Tokio 与官方 rmcp 接线 |
-| document/parse.rs、document/chunk.rs、document/path.rs | document；解析、扫描、切分与安全路径 |
-| search.rs、retrieval/index.rs | retrieval；LanceDB 与 FastEmbed 检索边界 |
-| governance/rules.rs、governance/validate.rs | governance；globset、dprint 与格式修复 |
-| model.rs | 共享契约类型；后续可按稳定性继续拆分 |
-| runtime.rs、sync.rs | Runtime 单次装配 SyncContext，sync 负责同步编排 |
-| storage.rs、graph.rs | SQLite 元数据与一跳关系职责 |
+| cli.rs、mcp.rs | 两个异步二进制入口；参数、协议和输出接线 |
+| document/* | 文档类型、解析、安全路径、切分与关系提取 |
+| projection/* | 同步编排、LanceDB、FastEmbed 与 SQLite 边界 |
+| retrieval/* | 查询契约、候选融合与证据组织 |
+| governance/* | 规则契约、globset、dprint、校验与格式修复 |
+| app.rs | AgentWiki 单次装配 Projection，并提供异步用例接口 |
 
-目录与依赖迁移已完成；后续只针对 MCP 结果结构、模型缓存策略和检索质量做增量演进。规则示例与代码内精简模板用途不同，默认模板不直接替换成完整示例。
+功能域目录与异步资源边界已经落地；后续只针对 MCP 结果结构、模型缓存策略和检索质量做增量演进。规则示例与代码内精简模板用途不同，默认模板不直接替换成完整示例。
 
 验收场景：
 

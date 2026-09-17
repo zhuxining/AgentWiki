@@ -5,7 +5,7 @@
 //! frontmatter block). It is kept deliberately small: entities are not
 //! auto-extracted.
 
-use crate::model::{Edge, EdgeStatus, PathScope};
+use crate::document::types::{Edge, EdgeStatus, PathScope};
 use pulldown_cmark::{Event, LinkType, Options, Parser, Tag};
 
 /// Extract all edges declared in one document's frontmatter and body.
@@ -14,7 +14,7 @@ use pulldown_cmark::{Event, LinkType, Options, Parser, Tag};
 /// plus any non-fatal warnings (e.g. an illegal `relations` shape).
 pub fn extract_edges(
     from: &PathScope,
-    frontmatter: &crate::model::Frontmatter,
+    frontmatter: &crate::document::types::Frontmatter,
     body: &str,
 ) -> (Vec<Edge>, Vec<String>) {
     let mut edges = Vec::new();
@@ -166,7 +166,7 @@ fn resolve_target(from: &PathScope, to: &str) -> PathScope {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::Frontmatter;
+    use crate::document::types::Frontmatter;
 
     fn scope(p: &str) -> PathScope {
         PathScope(camino::Utf8PathBuf::from(p))

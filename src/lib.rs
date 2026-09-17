@@ -15,24 +15,19 @@
 
 #![forbid(unsafe_code)]
 
+mod app;
 pub mod config;
-pub mod document;
+mod document;
 pub mod error;
-pub mod governance;
-pub mod graph;
-pub mod model;
-pub mod retrieval;
-pub mod runtime;
-pub mod search;
-pub mod storage;
-pub mod sync;
+mod governance;
+mod projection;
+mod retrieval;
 
-/// Compatibility re-export for callers migrating to `governance::validate`.
-pub mod validate {
-    pub use crate::governance::validate::*;
-}
-
-pub use model::*;
-
-// Re-export the primary entry point used by both CLI and MCP composition roots.
-pub use runtime::Runtime;
+pub use app::{AgentWiki, OpenOptions};
+pub use document::types::PathScope;
+pub use governance::types::{
+    Issue, RulesRequest, RulesResult, Severity, ValidationRequest, ValidationResult,
+    ValidationScope,
+};
+pub use projection::types::SyncReport;
+pub use retrieval::types::{ContextQuery, SearchResult};

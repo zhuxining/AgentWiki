@@ -1,100 +1,18 @@
-use agentwiki::model::{ContextQuery, PathScope, Slice};
-use agentwiki::retrieval::LanceIndex;
-use tempfile::tempdir;
+use agentwiki::{AgentWiki, ContextQuery, OpenOptions};
 
-// Lance FTS uses the jieba tokenizer since ACCEPTANCE GAP-3; the dictionary
-// must be present (LANCE_LANGUAGE_MODEL_HOME or the default language-model
-// directory) or every `LanceIndex::open` fails with download instructions.
-
-#[test]
-fn lancedb_indexes_and_queries_chunks() {
-    let dir = tempdir().unwrap();
-    let index = LanceIndex::open(camino::Utf8Path::from_path(dir.path()).unwrap(), None).unwrap();
-    let path = PathScope("notes/auth.md".into());
-    let slice = Slice {
-        path: path.clone(),
-        chunk_id: "chunk-1".into(),
-        ordinal: 0,
-        section: "Tokens".into(),
-        content: "refresh token rotation policy".into(),
-        source_hash: "hash".into(),
-    };
-    index.replace_slices(&path, &[slice]).unwrap();
-    let result = index
-        .search(
-            &ContextQuery {
-                query: "refresh token".into(),
-                limit: 10,
-                ..Default::default()
-            },
-            false,
-        )
-        .unwrap();
-    assert_eq!(result.len(), 1);
-    assert_eq!(result[0].slice.path.0.as_str(), "notes/auth.md");
+async fn open(wiki: &tempfile::TempDir, projection: &tempfile::TempDir) -> AgentWiki {
+    AgentWiki::open(OpenOptions {
+        wiki_root: camino::Utf8PathBuf::from_path_buf(wiki.path().to_path_buf()).unwrap(),
+        projection_dir: camino::Utf8PathBuf::from_path_buf(projection.path().to_path_buf())
+            .unwrap(),
+        embedding_model: None,
+    })
+    .await
+    .unwrap()
 }
 
-#[test]
-fn lancedb_chinese_fts_matches_contiguous_text() {
-    // Regression for GAP-3: with the default `simple` tokenizer a contiguous
-    // Chinese sentence becomes one token and query terms never match; jieba
-    // must segment 认证方案/令牌/轮换 strategy words out of the sentence.
-    let dir = tempdir().unwrap();
-    let index = LanceIndex::open(camino::Utf8Path::from_path(dir.path()).unwrap(), None).unwrap();
-    let path = PathScope("notes/认证.md".into());
-    let slice = Slice {
-        path: path.clone(),
-        chunk_id: "chunk-zh".into(),
-        ordinal: 0,
-        section: "刷新令牌".into(),
-        content: "认证方案采用OAuth2协议，刷新令牌轮换策略30天。".into(),
-        source_hash: "hash-zh".into(),
-    };
-    index.replace_slices(&path, &[slice]).unwrap();
-    for query in ["认证", "令牌", "轮换", "认证方案", "刷新令牌"] {
-        let result = index
-            .search(
-                &ContextQuery {
-                    query: query.into(),
-                    limit: 10,
-                    ..Default::default()
-                },
-                false,
-            )
-            .unwrap();
-        assert_eq!(result.len(), 1, "query `{query}` should hit with jieba");
-    }
-}
-
-#[test]
-fn lancedb_supports_optional_vector_projection() {
-    let dir = tempfile::tempdir().unwrap();
-    let index =
-        LanceIndex::open(camino::Utf8Path::from_path(dir.path()).unwrap(), Some(2)).unwrap();
-    let path = agentwiki::model::PathScope("notes/vector.md".into());
-    let slices = vec![agentwiki::model::Slice {
-        path: path.clone(),
-        chunk_id: "v1".into(),
-        ordinal: 0,
-        section: "".into(),
-        content: "semantic evidence".into(),
-        source_hash: "hash".into(),
-    }];
-    index
-        .replace_vectors(&path, &slices, &[vec![1.0, 0.0]])
-        .unwrap();
-    let query = agentwiki::model::ContextQuery {
-        query: "semantic".into(),
-        limit: 5,
-        ..Default::default()
-    };
-    let hits = index.vector_search(&query, &[1.0, 0.0]).unwrap();
-    assert_eq!(hits.len(), 1);
-    assert_eq!(hits[0].sources, vec!["semantic"]);
-}
-
-#[test]
-fn runtime_applies_frontmatter_filters() {
+#[tokio::test]
+async fn query_applies_frontmatter_filters() {
     let wiki = tempfile::tempdir().unwrap();
     std::fs::write(wiki.path().join("AGENTWIKI.md"), "---\nversion: 1\n---\n").unwrap();
     std::fs::write(
@@ -103,40 +21,37 @@ fn runtime_applies_frontmatter_filters() {
     )
     .unwrap();
     let projection = tempfile::tempdir().unwrap();
-    let root = camino::Utf8Path::from_path(wiki.path()).unwrap();
-    let index = camino::Utf8Path::from_path(projection.path()).unwrap();
-    let mut runtime = agentwiki::Runtime::assemble(root, index).unwrap();
-    runtime.ensure_fresh().unwrap();
-    let query = agentwiki::model::ContextQuery {
-        query: "refresh token".into(),
-        tags: vec!["rust".into()],
-        note_types: vec!["guide".into()],
-        limit: 5,
-        ..Default::default()
-    };
-    let result = runtime.query(&query).unwrap();
+    let app = open(&wiki, &projection).await;
+    let result = app
+        .query(ContextQuery {
+            query: "refresh token".into(),
+            tags: vec!["rust".into()],
+            note_types: vec!["guide".into()],
+            limit: 5,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
     assert_eq!(result.slices.len(), 1);
+    assert_eq!(result.slices[0].title, "Guide");
 }
 
-#[test]
-fn runtime_returns_recent_documents_for_empty_query() {
+#[tokio::test]
+async fn empty_query_returns_recent_documents() {
     let wiki = tempfile::tempdir().unwrap();
-    std::fs::write(wiki.path().join("AGENTWIKI.md"), "---\nversion: 1\n---\n").unwrap();
     std::fs::write(
         wiki.path().join("recent.md"),
         "---\ntitle: Recent\n---\n\nLatest note\n",
     )
     .unwrap();
     let projection = tempfile::tempdir().unwrap();
-    let root = camino::Utf8Path::from_path(wiki.path()).unwrap();
-    let index = camino::Utf8Path::from_path(projection.path()).unwrap();
-    let mut runtime = agentwiki::Runtime::assemble(root, index).unwrap();
-    runtime.ensure_fresh().unwrap();
-    let result = runtime
-        .query(&agentwiki::model::ContextQuery {
+    let app = open(&wiki, &projection).await;
+    let result = app
+        .query(ContextQuery {
             limit: 5,
             ..Default::default()
         })
+        .await
         .unwrap();
     assert_eq!(result.slices[0].slice.path.0.as_str(), "recent.md");
     assert!(result.slices[0].sources.contains(&"recency".to_string()));

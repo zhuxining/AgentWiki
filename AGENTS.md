@@ -27,22 +27,22 @@
 目标结构按功能聚合，完整目录和当前模块映射见架构文档：
 
 ```text
-src/bin/         CLI / MCP 参数、协议、输出
-src/document/    安全路径、读取、解析、章节切分
-src/retrieval/   查询契约、策略、LanceDB、FastEmbed
-src/governance/  规则、校验、格式修复
-src/runtime.rs  唯一资源所有者与用例入口
-src/sync.rs     增量投影、重建与重试编排
-src/storage.rs  SQLite 账本、文档信息、关系
-src/graph.rs    显式一跳文档关系
+src/cli.rs         CLI 参数、输出与组合入口
+src/mcp.rs         MCP 协议与组合入口
+src/config.rs      配置加载与投影路径
+src/app.rs         AgentWiki 异步用例门面和资源所有权
+src/document/      安全路径、读取、解析、切分与关系提取
+src/projection/    同步编排、LanceDB、FastEmbed 和 SQLite
+src/retrieval/     查询契约、融合策略与证据组织
+src/governance/    规则、校验与格式修复
 ```
 
 - 目录随功能迁移创建，不声明空模块，不新增 workspace、通用 Repository 或无消费者的 trait。
-- Runtime 统一持有一个 SyncContext 资源束，sync、检索和治理通过 Runtime 的用例入口访问，不重复装配索引或 SQLite。
-- LanceDB/Arrow 类型仅在 retrieval/index，FastEmbed 类型仅在 embedding，SQLite 连接仅在 storage；禁止越过适配边界操作底层资源。
-- model 保留跨 document、retrieval、governance 的纯契约类型；不触碰文件系统，不依赖引擎、数据库或协议 SDK。数据库行结构留在 storage 内部。
+- AgentWiki 是唯一异步用例门面，统一持有 Projection 资源束；同步、检索和治理不重复装配索引或 SQLite。
+- LanceDB/Arrow 类型仅在 projection/lance，FastEmbed 类型仅在 projection/embedding，SQLite 连接仅在 projection/metadata；禁止越过适配边界操作底层资源。
+- 契约类型按 document、retrieval、governance、projection 归属，不建立中央 model 模块；数据库行结构留在 projection/metadata 内部。
 - lib 仅导出调用者需要的公共 API；入口只负责配置、参数、协议和序列化，不复制业务实现。
-- document 统一生成解析结果，graph 和 validate 复用；不得分别实现标题、链接扫描或重复读取变化文档。
+- document 统一生成解析结果，relation 和 validate 复用；不得分别实现标题、链接扫描或重复读取变化文档。
 
 ## 数据与行为约束
 

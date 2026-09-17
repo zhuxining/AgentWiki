@@ -9,8 +9,44 @@
 use camino::Utf8Path;
 use rusqlite::Connection;
 
+use crate::document::types::{Edge, EdgeStatus, PathScope};
 use crate::error::Result;
-use crate::model::{Edge, EdgeStatus, PathScope};
+
+#[derive(Clone)]
+pub struct Metadata {
+    inner: std::sync::Arc<std::sync::Mutex<MetaStore>>,
+}
+
+impl Metadata {
+    pub async fn open(index_dir: camino::Utf8PathBuf) -> Result<Self> {
+        let store = tokio::task::spawn_blocking(move || MetaStore::open(&index_dir))
+            .await
+            .map_err(|error| {
+                crate::error::AgentWikiError::Other(format!("metadata task failed: {error}"))
+            })??;
+        Ok(Self {
+            inner: std::sync::Arc::new(std::sync::Mutex::new(store)),
+        })
+    }
+
+    pub async fn with<T, F>(&self, work: F) -> Result<T>
+    where
+        T: Send + 'static,
+        F: FnOnce(&mut MetaStore) -> Result<T> + Send + 'static,
+    {
+        let inner = self.inner.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut store = inner.lock().map_err(|error| {
+                crate::error::AgentWikiError::Other(format!("metadata lock poisoned: {error}"))
+            })?;
+            work(&mut store)
+        })
+        .await
+        .map_err(|error| {
+            crate::error::AgentWikiError::Other(format!("metadata task failed: {error}"))
+        })?
+    }
+}
 
 /// Retrieval projection format version, stored under `retrieval_format` in
 /// `index_meta`. Bump whenever the LanceDB index layout or tokenizer
@@ -25,8 +61,6 @@ pub const RETRIEVAL_FORMAT: &str = "fts-jieba-v1";
 pub struct MetaStore {
     pub(crate) needs_rebuild: bool,
     conn: Connection,
-    /// Path of the directory we alias as the "index" root (used for the lock file).
-    pub index_dir: camino::Utf8PathBuf,
 }
 
 /// Ledger row for one document.
@@ -86,21 +120,20 @@ impl MetaStore {
         Ok(MetaStore {
             needs_rebuild: cur != SCHEMA_VERSION || !format_matches,
             conn,
-            index_dir: index_dir.to_path_buf(),
         })
     }
 
     /// List the current ledger as (path -> fingerprint) map.
     pub fn ledger_snapshot(
         &self,
-    ) -> Result<std::collections::BTreeMap<String, crate::model::Fingerprint>> {
+    ) -> Result<std::collections::BTreeMap<String, crate::document::types::Fingerprint>> {
         let mut stmt = self
             .conn
             .prepare("SELECT path, content_hash, mtime_ns, size FROM documents")?;
         let rows = stmt.query_map([], |r| {
             Ok((
                 r.get::<_, String>(0)?,
-                crate::model::Fingerprint {
+                crate::document::types::Fingerprint {
                     content_hash: r.get(1)?,
                     mtime_ns: r.get(2)?,
                     size: r.get::<_, i64>(3)? as u64,
@@ -174,7 +207,7 @@ impl MetaStore {
     }
 
     /// Read one document's frontmatter projection for query-time filters.
-    pub fn frontmatter_for_path(&self, path: &str) -> Result<crate::model::Frontmatter> {
+    pub fn frontmatter_for_path(&self, path: &str) -> Result<crate::document::types::Frontmatter> {
         let raw: String = self.conn.query_row(
             "SELECT frontmatter_json FROM documents WHERE path = ?1",
             [path],
@@ -194,7 +227,7 @@ impl MetaStore {
         let mut counts = std::collections::BTreeMap::new();
         for row in rows {
             let raw: String = row?;
-            let Ok(fm) = serde_json::from_str::<crate::model::Frontmatter>(&raw) else {
+            let Ok(fm) = serde_json::from_str::<crate::document::types::Frontmatter>(&raw) else {
                 continue;
             };
             if let Some(serde_json::Value::Array(tags)) = fm.get("tags") {
@@ -207,7 +240,7 @@ impl MetaStore {
     }
 
     /// Ledger fingerprint of one document (for display timestamps).
-    pub fn ledger_fingerprint(&self, path: &str) -> Result<crate::model::Fingerprint> {
+    pub fn ledger_fingerprint(&self, path: &str) -> Result<crate::document::types::Fingerprint> {
         use rusqlite::OptionalExtension;
         Ok(self
             .conn
@@ -215,7 +248,7 @@ impl MetaStore {
                 "SELECT content_hash, mtime_ns, size FROM documents WHERE path = ?1",
                 [path],
                 |r| {
-                    Ok(crate::model::Fingerprint {
+                    Ok(crate::document::types::Fingerprint {
                         content_hash: r.get(0)?,
                         mtime_ns: r.get(1)?,
                         size: r.get::<_, i64>(2)? as u64,
@@ -256,17 +289,6 @@ impl MetaStore {
         Ok(())
     }
 
-    /// Read the persisted `index_generation` marker (empty when unset).
-    pub fn generation(&self) -> Result<String> {
-        self.conn
-            .query_row(
-                "SELECT value FROM index_meta WHERE key = 'index_generation'",
-                [],
-                |r| r.get::<_, String>(0),
-            )
-            .or_else(|_| Ok(String::new()))
-    }
-
     /// Persist the retrieval projection format version. Only written after a
     /// sync/rebuild round confirms the projection, so a stale marker keeps
     /// forcing the full rebuild (idempotent).
@@ -286,7 +308,11 @@ impl MetaStore {
         Ok(())
     }
 
-    pub fn update_fingerprint(&self, path: &str, fp: &crate::model::Fingerprint) -> Result<()> {
+    pub fn update_fingerprint(
+        &self,
+        path: &str,
+        fp: &crate::document::types::Fingerprint,
+    ) -> Result<()> {
         self.conn.execute(
             "UPDATE documents SET mtime_ns = ?2, size = ?3 WHERE path = ?1",
             rusqlite::params![path, fp.mtime_ns, fp.size as i64],

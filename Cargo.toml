@@ -14,11 +14,11 @@ path = "src/lib.rs"
 
 [[bin]]
 name = "agentwiki"
-path = "src/bin/agentwiki.rs"
+path = "src/cli.rs"
 
 [[bin]]
 name = "agentwiki-mcp"
-path = "src/bin/agentwiki-mcp.rs"
+path = "src/mcp.rs"
 
 # ---------------------------------------------------------------------------
 # Core runtime, config, error handling

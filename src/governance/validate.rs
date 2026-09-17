@@ -3,9 +3,10 @@
 
 use camino::Utf8Path;
 
+use crate::document::types::{Frontmatter, PathScope};
 use crate::error::Result;
 use crate::governance::rules;
-use crate::model::{Frontmatter, Issue, PathScope, Rule, Severity};
+use crate::governance::types::{Issue, Rule, Severity};
 
 /// Validate one document (when `scope` is `Some`) or the whole wiki.
 ///
@@ -107,9 +108,9 @@ fn validate_one(
     }
 
     // Broken internal links (wikilinks whose target is not a known document).
-    let (edges, _warns) = crate::graph::extract_edges(path, &frontmatter, &body);
+    let (edges, _warns) = crate::document::relation::extract_edges(path, &frontmatter, &body);
     for e in edges {
-        if e.status == crate::model::EdgeStatus::Resolved {
+        if e.status == crate::document::types::EdgeStatus::Resolved {
             continue;
         }
         if !known.contains(e.to.0.as_str()) {
@@ -341,7 +342,7 @@ fn load_rules(root: &Utf8Path) -> (Option<Rule>, Option<Issue>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::Severity;
+    use crate::governance::types::Severity;
 
     /// Write a wiki into `dir`: `AGENTWIKI.md` rules plus `docs` (path, content).
     fn wiki(dir: &std::path::Path, rules: &str, docs: &[(&str, &str)]) -> camino::Utf8PathBuf {
