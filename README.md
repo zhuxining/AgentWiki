@@ -91,6 +91,7 @@ Python 原型及其基准归档在 `legacy/python/`，不参与 Rust 开发。Ru
 
 | 文档 | 职责 |
 | --- | --- |
+| [产品与 MVP](docs/PRODUCT.md) | 产品定位、用户闭环、范围、需求与验收标准 |
 | [架构](docs/ARCHITECTURE.md) | 组件、目标目录、数据流、迁移映射及验收 |
 | [MCP 契约](docs/MCP_TOOLS.md) | 三个工具的目标参数、结果与副作用 |
 | [规则参考](docs/RULES.md) | Frontmatter、目录匹配、标签与格式规范 |
