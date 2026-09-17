@@ -7,8 +7,8 @@ use super::types::{PathScope, Slice};
 const MAX_CHUNK_CHARS: usize = 1_200;
 const OVERLAP_CHARS: usize = 150;
 
-pub fn chunk_document(title: &str, body: &str, path: &PathScope) -> Vec<Slice> {
-    let _ = title;
+pub fn chunk_document(summary: &str, body: &str, path: &PathScope) -> Vec<Slice> {
+    let filename = path.0.file_stem().unwrap_or_else(|| path.0.as_str());
     let mut sections: Vec<(String, String)> = Vec::new();
     let mut headings: Vec<(usize, String)> = Vec::new();
     let mut heading = None;
@@ -53,12 +53,21 @@ pub fn chunk_document(title: &str, body: &str, path: &PathScope) -> Vec<Slice> {
     if sections.is_empty()
         || (!sections.iter().any(|(_, content)| !content.is_empty()) && body.trim().is_empty())
     {
-        slices.push(empty_slice(path, ordinal, breadcrumb(&headings)));
+        slices.push(empty_slice(
+            summary,
+            filename,
+            path,
+            ordinal,
+            breadcrumb(&headings),
+        ));
         return slices;
     }
     for (section, content) in sections {
         for fragment in split_oversized(&content) {
             let source = format!("{section}\n{fragment}").trim().to_string();
+            let search_text = format!("{filename}\n{summary}\n{source}")
+                .trim()
+                .to_string();
             slices.push(Slice {
                 path: path.clone(),
                 chunk_id: hex::encode(Sha256::digest(
@@ -67,6 +76,7 @@ pub fn chunk_document(title: &str, body: &str, path: &PathScope) -> Vec<Slice> {
                 ordinal,
                 section: section.clone(),
                 content: fragment,
+                search_text,
                 source_hash: hex::encode(Sha256::digest(source.as_bytes())),
             });
             ordinal += 1;
@@ -75,8 +85,17 @@ pub fn chunk_document(title: &str, body: &str, path: &PathScope) -> Vec<Slice> {
     slices
 }
 
-fn empty_slice(path: &PathScope, ordinal: u32, section: String) -> Slice {
+fn empty_slice(
+    summary: &str,
+    filename: &str,
+    path: &PathScope,
+    ordinal: u32,
+    section: String,
+) -> Slice {
     let source = section.clone();
+    let search_text = format!("{filename}\n{summary}\n{source}")
+        .trim()
+        .to_string();
     Slice {
         path: path.clone(),
         chunk_id: hex::encode(Sha256::digest(
@@ -85,6 +104,7 @@ fn empty_slice(path: &PathScope, ordinal: u32, section: String) -> Slice {
         ordinal,
         section,
         content: String::new(),
+        search_text,
         source_hash: hex::encode(Sha256::digest(source.as_bytes())),
     }
 }

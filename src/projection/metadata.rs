@@ -52,7 +52,7 @@ impl Metadata {
 /// `index_meta`. Bump whenever the LanceDB index layout or tokenizer
 /// configuration changes: a mismatch marks the projection for full rebuild
 /// (derived projections are wiped, never migrated).
-pub const RETRIEVAL_FORMAT: &str = "fts-jieba-v1";
+pub const RETRIEVAL_FORMAT: &str = "fts-jieba-summary-v2";
 
 /// Thin wrapper over a `rusqlite::Connection` for wiki metadata.
 ///
@@ -89,12 +89,12 @@ impl MetaStore {
 
         // Version-gate the schema: bump `SCHEMA_VERSION` when the schema text
         // changes. On mismatch we drop and recreate; Markdown is untouched.
-        const SCHEMA_VERSION: i32 = 3;
+        const SCHEMA_VERSION: i32 = 4;
         let cur: i32 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap_or(0);
         if cur != SCHEMA_VERSION {
-            conn.execute_batch("DROP TABLE IF EXISTS documents; DROP TABLE IF EXISTS edges; DROP TABLE IF EXISTS vector_manifest; DROP TABLE IF EXISTS index_meta; DROP TABLE IF EXISTS titles;")?;
+            conn.execute_batch("DROP TABLE IF EXISTS documents; DROP TABLE IF EXISTS edges; DROP TABLE IF EXISTS vector_manifest; DROP TABLE IF EXISTS index_meta;")?;
             conn.execute_batch(SCHEMA_SQL)?;
             conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         } else {
@@ -200,8 +200,6 @@ impl MetaStore {
         self.conn
             .execute("DELETE FROM edges WHERE from_path = ?1", [path.0.as_str()])?;
         self.conn
-            .execute("DELETE FROM titles WHERE path = ?1", [path.0.as_str()])?;
-        self.conn
             .execute("DELETE FROM documents WHERE path = ?1", [path.0.as_str()])?;
         Ok(())
     }
@@ -302,9 +300,8 @@ impl MetaStore {
 
     /// Clear every derived projection (document ledger + edges + vectors).
     pub fn clear(&mut self) -> Result<()> {
-        self.conn.execute_batch(
-            "DELETE FROM documents; DELETE FROM edges; DELETE FROM titles; DELETE FROM index_meta;",
-        )?;
+        self.conn
+            .execute_batch("DELETE FROM documents; DELETE FROM edges; DELETE FROM index_meta;")?;
         Ok(())
     }
 
@@ -346,15 +343,6 @@ impl MetaStore {
         Ok(())
     }
 
-    /// Persist the display title of a document for retrieval/listing.
-    pub fn set_title(&self, path: &PathScope, title: &str) -> Result<()> {
-        self.conn.execute(
-            "INSERT OR REPLACE INTO titles (path, title) VALUES (?1, ?2)",
-            rusqlite::params![path.0.as_str(), title],
-        )?;
-        Ok(())
-    }
-
     /// Read the outgoing edges declared by one document (one hop).
     pub fn edges_for_path(&self, path: &str) -> Result<Vec<Edge>> {
         self.edges_like(
@@ -392,26 +380,12 @@ impl MetaStore {
         Ok(out)
     }
 
-    /// Display title of one document from the titles projection.
-    pub fn title_for(&self, path: &str) -> Result<Option<String>> {
-        use rusqlite::OptionalExtension;
-        Ok(self
-            .conn
-            .query_row("SELECT title FROM titles WHERE path = ?1", [path], |r| {
-                r.get(0)
-            })
-            .optional()?)
-    }
-
-    /// All (path, title) pairs from the titles projection (exact-match leg).
-    pub fn all_titles(&self) -> Result<Vec<(String, String)>> {
-        let mut stmt = self.conn.prepare("SELECT path, title FROM titles")?;
-        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
-        let mut out = Vec::new();
-        for row in rows {
-            out.push(row?);
-        }
-        Ok(out)
+    /// Return all indexed paths for filename/path exact matching.
+    pub fn all_paths(&self) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare("SELECT path FROM documents")?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(Into::into)
     }
 }
 
@@ -447,10 +421,6 @@ CREATE TABLE IF NOT EXISTS index_meta (
     value TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS titles (
-    path  TEXT PRIMARY KEY,
-    title TEXT NOT NULL
-);
 "#;
 
 impl EdgeStatus {

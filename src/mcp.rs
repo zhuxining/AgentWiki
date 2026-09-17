@@ -89,7 +89,7 @@ impl McpServer {
             .await
             .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))?;
         // Assemble the contractual response shape (MCP_TOOLS.md),
-        // enriching each ranked slice with title / mtime / frontmatter.
+        // enriching each ranked slice with filename / summary / mtime / frontmatter.
         let mut results = Vec::new();
         for (index, hit) in result.slices.iter().enumerate() {
             // One-hop relations attach to the primary hit only.
@@ -105,7 +105,12 @@ impl McpServer {
             };
             results.push(serde_json::json!({
                 "path": hit.slice.path.0,
-                "title": hit.title,
+                "filename": hit.filename,
+                "summary": hit
+                    .frontmatter
+                    .get("summary")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null),
                 "section": hit.slice.section,
                 "snippet": hit.slice.content,
                 "rank_score": hit.score,
@@ -154,8 +159,15 @@ impl McpServer {
             })
             .await
             .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))
-            .and_then(|issues| {
-                serde_json::to_string(&issues)
+            .and_then(|mut result| {
+                let root = self.wiki.wiki_root().to_path_buf();
+                for issue in &mut result.issues {
+                    issue.path = root.join(&issue.path).to_string();
+                }
+                for path in &mut result.formatted_paths {
+                    *path = root.join(&*path).to_string();
+                }
+                serde_json::to_string(&result)
                     .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))
             })
     }

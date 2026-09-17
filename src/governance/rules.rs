@@ -8,9 +8,11 @@ use crate::error::Result;
 use crate::governance::types::{EffectiveRules, Rule, RuleSection};
 use globset::GlobBuilder;
 
-/// Decode rule-file frontmatter into a [`Rule`], applying contract defaults
-/// (`version = 1`, `name = "AgentWiki"`, `default_type = "note"`) and
-/// rejecting unknown fields.
+/// Fields required for every indexed document, independent of wiki rules.
+pub const BUILTIN_REQUIRED_FIELDS: &[&str] = &["type", "tags", "summary"];
+
+/// Decode rule-file frontmatter into a [`Rule`], applying the contract default
+/// (`default_type = "note"`) and rejecting unknown fields.
 ///
 /// # Errors
 /// `Parse` when the map violates the rule contract or `version < 1`.
@@ -22,13 +24,25 @@ pub fn parse_rules(fm: &Frontmatter) -> Result<Rule> {
                 message: format!("invalid rule file: {e}"),
             }
         })?;
-    if rule.version < 1 {
-        return Err(crate::error::AgentWikiError::Parse {
-            path: "AGENTWIKI.md".into(),
-            message: format!("rule version must be >= 1, got {}", rule.version),
-        });
+    for section in &rule.sections {
+        validate_pattern("section.path", &section.path)?;
+        if let Some(pattern) = &section.filename_pattern {
+            validate_pattern("section.filename_pattern", pattern)?;
+        }
     }
     Ok(rule)
+}
+
+fn validate_pattern(field: &str, pattern: &str) -> Result<()> {
+    GlobBuilder::new(pattern)
+        .literal_separator(false)
+        .backslash_escape(false)
+        .build()
+        .map(|_| ())
+        .map_err(|error| crate::error::AgentWikiError::Parse {
+            path: "AGENTWIKI.md".into(),
+            message: format!("invalid {field} pattern `{pattern}`: {error}"),
+        })
 }
 
 /// fnmatch glob match with `*` crossing `/` (RULES.md semantics, unlike
@@ -69,7 +83,10 @@ pub fn matching_sections<'a>(path: &str, rule: &'a Rule) -> Vec<&'a RuleSection>
 /// `required_fields` is the root list plus each matching section's list,
 /// deduplicated in ascending-specificity order.
 pub fn effective_rules(path: &str, rule: &Rule) -> EffectiveRules {
-    let mut required: Vec<String> = Vec::new();
+    let mut required: Vec<String> = BUILTIN_REQUIRED_FIELDS
+        .iter()
+        .map(|field| (*field).to_owned())
+        .collect();
     let mut push = |list: &[String]| {
         for f in list {
             if !required.contains(f) {
@@ -99,8 +116,6 @@ mod tests {
     fn fixture() -> Rule {
         let fm: Frontmatter = Frontmatter::from(
             serde_json::from_value::<serde_json::Map<String, serde_json::Value>>(json!({
-                "name": "Team Wiki",
-                "purpose": "团队知识、技术决策和操作指南",
                 "default_type": "note",
                 "required_fields": ["title", "type", "tags", "owner"],
                 "tag_aliases": {
@@ -109,7 +124,7 @@ mod tests {
                     "architecture": ["arch"]
                 },
                 "sections": [
-                    {"path": "decisions", "description": "决策", "types": ["decision"],
+                    {"path": "decisions", "types": ["decision"],
                      "required_fields": ["status", "decided_at"], "filename_pattern": "*.md"},
                     {"path": "guides", "types": ["guide"], "required_fields": ["status"]},
                     {"path": "projects/*", "types": ["project", "note"],
@@ -125,8 +140,6 @@ mod tests {
     #[test]
     fn parses_full_rule_file() {
         let rule = fixture();
-        assert_eq!(rule.name, "Team Wiki");
-        assert_eq!(rule.version, 1);
         assert_eq!(rule.default_type, "note");
         assert_eq!(rule.required_fields, vec!["title", "type", "tags", "owner"]);
         assert_eq!(rule.tag_aliases["architecture"], vec!["arch"]);
@@ -145,12 +158,13 @@ mod tests {
         }))
         .unwrap();
         let rule = parse_rules(&fm).unwrap();
-        assert_eq!(rule.version, 1);
-        assert_eq!(rule.name, "AgentWiki");
         assert_eq!(rule.default_type, "note");
-        assert!(rule.purpose.is_empty());
         assert!(rule.sections.is_empty());
         assert!(rule.tag_aliases.is_empty());
+        assert_eq!(
+            effective_rules("notes/example.md", &rule).required_fields,
+            vec!["type", "tags", "summary", "title"]
+        );
     }
 
     #[test]
@@ -169,8 +183,17 @@ mod tests {
     }
 
     #[test]
-    fn rejects_expired_version() {
-        let fm: Frontmatter = serde_json::from_value(json!({"version": 0})).unwrap();
+    fn rejects_invalid_section_patterns() {
+        let fm: Frontmatter = serde_json::from_value(json!({
+            "sections": [{"path": "[invalid"}]
+        }))
+        .unwrap();
+        assert!(parse_rules(&fm).is_err());
+
+        let fm: Frontmatter = serde_json::from_value(json!({
+            "sections": [{"path": "notes", "filename_pattern": "[invalid"}]
+        }))
+        .unwrap();
         assert!(parse_rules(&fm).is_err());
     }
 
@@ -270,13 +293,16 @@ mod tests {
         let eff = effective_rules("guides/onboarding.md", &rule);
         assert_eq!(
             eff.required_fields,
-            vec!["title", "type", "tags", "owner", "status"]
+            vec!["type", "tags", "summary", "title", "owner", "status"]
         );
         assert_eq!(eff.default_type, "note");
         assert_eq!(eff.sections.len(), 1);
         assert_eq!(eff.sections[0].path, "guides");
         let eff = effective_rules("misc/odds.md", &rule);
-        assert_eq!(eff.required_fields, vec!["title", "type", "tags", "owner"]);
+        assert_eq!(
+            eff.required_fields,
+            vec!["type", "tags", "summary", "title", "owner"]
+        );
         assert!(eff.sections.is_empty());
     }
 

@@ -12,13 +12,11 @@ use agentwiki::{
 };
 
 const RULES: &str = r#"---
-name: Test Wiki
-purpose: 端到端校验契约
 default_type: note
 required_fields:
-  - title
   - type
   - tags
+  - summary
 tag_aliases:
   guide:
     - guides
@@ -26,7 +24,6 @@ tag_aliases:
     - decisions
 sections:
   - path: decisions
-    description: 已确认的决策
     types: [decision]
     required_fields: [status, decided_at]
   - path: guides
@@ -39,12 +36,9 @@ sections:
 
 /// A fully conforming document for every section (all-canonical tags).
 const CLEAN: &str = r#"---
-title: 合格文档
 type: note
 tags: [guide, decision]
-created_at: 2026-01-01
-updated_at: 2026-01-02
-owner: nobody
+summary: 合格文档说明。
 ---
 
 # 正文
@@ -99,7 +93,7 @@ async fn clean_wiki_passes_all_rule_checks() {
             ("notes/另一篇.md", CLEAN),
             (
                 "notes/正文.md",
-                "---\ntitle: 主文档\ntype: note\ntags: [guide]\n---\n\n# 正文\n\n见 [[另一篇.md]]。\n",
+                "---\ntype: note\ntags: [guide]\nsummary: 主文档说明。\n---\n\n# 正文\n\n见 [[另一篇.md]]。\n",
             ),
         ],
     );
@@ -119,19 +113,19 @@ async fn rule_violations_report_kinds_and_severity() {
             // alias tag, new tag.
             (
                 "decisions/bad.md",
-                "---\ntitle: 缺字段\ntags: [decision, 新标签]\n---\n\n见 [[not-there.md]]。\n",
+                "---\ntags: [decision, 新标签]\nsummary: 缺字段测试。\n---\n\n见 [[not-there.md]]。\n",
             ),
             // `type: note` not allowed in `guides`; name violates the pattern;
             // `decisions` is an alias of `decision`.
             (
                 "guides/notes.md",
-                "---\ntitle: 违规指南\ntype: note\ntags: [decisions]\nstatus: draft\n---\n\n正文\n",
+                "---\ntype: note\ntags: [decisions]\nsummary: 违规指南测试。\nstatus: draft\n---\n\n正文\n",
             ),
             // Conforming docs, the second being the first one's link target.
             ("notes/ok.md", CLEAN),
             (
                 "notes/另一篇.md",
-                "---\ntitle: 另一篇\ntype: note\ntags: [guide]\n---\n\n正文\n",
+                "---\ntype: note\ntags: [guide]\nsummary: 另一篇说明。\n---\n\n正文\n",
             ),
         ],
     );
@@ -178,7 +172,7 @@ async fn single_document_mode_skips_new_tag_but_checks_own_links() {
         dir.path(),
         &[(
             "notes/only.md",
-            "---\ntitle: 独篇\ntype: note\ntags: [独一无二]\n---\n\n见 [[missing.md]]。\n",
+            "---\ntype: note\ntags: [独一无二]\nsummary: 独篇测试。\n---\n\n见 [[missing.md]]。\n",
         )],
     );
     let path = PathScope(camino::Utf8PathBuf::from("notes/only.md"));

@@ -126,7 +126,7 @@ fn validate_one(
     // 4) Structural: non-empty content must produce at least one slice.
     let slices = crate::document::chunk_document(
         frontmatter
-            .get("title")
+            .get("summary")
             .and_then(|v| v.as_str())
             .unwrap_or(""),
         &body,
@@ -182,6 +182,33 @@ fn check_rules(
         }
     }
 
+    match frontmatter.get("type") {
+        Some(serde_json::Value::String(kind)) if !kind.trim().is_empty() => {}
+        Some(_) => issues.push(error(
+            "type.invalid",
+            "`type` must be a non-empty string".into(),
+        )),
+        None => {}
+    }
+
+    match frontmatter.get("summary") {
+        Some(serde_json::Value::String(summary)) if !summary.trim().is_empty() => {
+            if summary.chars().count() > 400 {
+                issues.push(Issue {
+                    path: path_str.to_string(),
+                    kind: "summary.long".into(),
+                    message: "summary should be concise (target about 100 tokens)".into(),
+                    severity: Severity::Warning,
+                });
+            }
+        }
+        Some(_) => issues.push(error(
+            "summary.invalid",
+            "`summary` must be a non-empty string".into(),
+        )),
+        None => {}
+    }
+
     // Type / filename: the most specific matching section governs (sections
     // are ordered ascending by pattern length — RULES.md).
     if let Some(section) = eff.sections.last() {
@@ -217,7 +244,7 @@ fn check_rules(
     // Tags: structural validity, canonical-form suggestion, new-tag warning.
     match frontmatter.get("tags") {
         Some(serde_json::Value::Array(items)) => {
-            let mut structurally_valid = true;
+            let mut structurally_valid = !items.is_empty();
             for item in items {
                 match item.as_str() {
                     Some(tag) if is_valid_tag(tag) => {
@@ -358,7 +385,6 @@ mod tests {
     }
 
     const RULES: &str = r#"---
-name: Test Wiki
 default_type: note
 required_fields:
   - title
@@ -559,12 +585,16 @@ sections:
     }
 
     #[test]
-    fn empty_rule_file_skips_rule_checks() {
+    fn empty_rule_file_keeps_builtin_checks() {
         let dir = tempfile::tempdir().unwrap();
         let root = wiki(dir.path(), "", &[("notes/a.md", "# hello\n\nbody\n")]);
-        // Empty AGENTWIKI.md has no frontmatter -> parse gives an empty rule.
+        // Empty AGENTWIKI.md has no configured fields, but built-in fields remain.
         let issues = validate_wiki(&root, None).unwrap();
-        assert!(!issues.iter().any(|i| i.kind == "frontmatter.required"));
+        let missing = issues
+            .iter()
+            .filter(|issue| issue.kind == "frontmatter.required")
+            .count();
+        assert_eq!(missing, 3);
         assert!(!issues.iter().any(|i| i.kind == "rules.parse"));
     }
 }

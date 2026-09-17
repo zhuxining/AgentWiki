@@ -178,7 +178,12 @@ impl Projection {
                         .await?;
                     return Ok(false);
                 }
-                let slices = document::chunk_document(&doc.title, &body, path);
+                let summary = doc
+                    .frontmatter
+                    .get("summary")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("");
+                let slices = document::chunk_document(summary, &body, path);
                 let (edges, warnings) = relation::extract_edges(path, &doc.frontmatter, &body);
                 report
                     .degraded
@@ -188,11 +193,6 @@ impl Projection {
                 let relation_edges = edges.clone();
                 self.meta
                     .with(move |store| store.replace_document(&relation_path, &relation_edges))
-                    .await?;
-                let title_path = path.clone();
-                let title = doc.title.clone();
-                self.meta
-                    .with(move |store| store.set_title(&title_path, &title))
                     .await?;
                 let fresh_identity = || {
                     hex::encode(Sha256::digest(format!(
@@ -252,7 +252,7 @@ impl Projection {
                         .unwrap_or_default();
                     let inputs: Vec<String> = slices
                         .iter()
-                        .map(|s| input_text(&doc.title, &tags, &s.section, &s.content))
+                        .map(|s| input_text(&s.search_text, &tags))
                         .collect();
                     let input_hash = hex::encode(Sha256::digest(format!(
                         "BAAI/bge-small-zh-v1.5:512:v1:{inputs:?}"

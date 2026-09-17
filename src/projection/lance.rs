@@ -184,6 +184,7 @@ impl LanceIndex {
                 "ordinal".into(),
                 "section".into(),
                 "content".into(),
+                "search_text".into(),
                 "source_hash".into(),
                 "_distance".into(),
             ]))
@@ -213,6 +214,10 @@ impl LanceIndex {
                 .column_by_name("content")
                 .and_then(|c| c.as_any().downcast_ref::<StringArray>())
                 .ok_or_else(|| crate::error::AgentWikiError::Index("missing content".into()))?;
+            let search_texts = batch
+                .column_by_name("search_text")
+                .and_then(|c| c.as_any().downcast_ref::<StringArray>())
+                .ok_or_else(|| crate::error::AgentWikiError::Index("missing search_text".into()))?;
             let hashes = batch
                 .column_by_name("source_hash")
                 .and_then(|c| c.as_any().downcast_ref::<StringArray>())
@@ -234,11 +239,12 @@ impl LanceIndex {
                             ordinal: i as u32,
                             section: sections.value(i).into(),
                             content: contents.value(i).into(),
+                            search_text: search_texts.value(i).into(),
                             source_hash: hashes.value(i).into(),
                         },
                         score,
                         sources: vec!["semantic".into()],
-                        title: String::new(),
+                        filename: String::new(),
                         modified_at_ns: 0,
                         frontmatter: Default::default(),
                     });
@@ -274,6 +280,7 @@ impl LanceIndex {
                 "ordinal".into(),
                 "section".into(),
                 "content".into(),
+                "search_text".into(),
                 "source_hash".into(),
             ]))
             .limit(limit)
@@ -296,6 +303,7 @@ impl LanceIndex {
             let ids = col("chunk_id")?;
             let sections = col("section")?;
             let contents = col("content")?;
+            let search_texts = col("search_text")?;
             let hashes = col("source_hash")?;
             for i in 0..batch.num_rows() {
                 let slice = Slice {
@@ -304,13 +312,14 @@ impl LanceIndex {
                     ordinal: i as u32,
                     section: sections.value(i).into(),
                     content: contents.value(i).into(),
+                    search_text: search_texts.value(i).into(),
                     source_hash: hashes.value(i).into(),
                 };
                 out.push(RankedSlice {
                     slice,
                     score: 1.0 / (i as f64 + 1.0),
                     sources: vec!["keyword".into()],
-                    title: String::new(),
+                    filename: String::new(),
                     modified_at_ns: 0,
                     frontmatter: Default::default(),
                 });
@@ -332,6 +341,7 @@ impl LanceIndex {
                 "ordinal".into(),
                 "section".into(),
                 "content".into(),
+                "search_text".into(),
                 "source_hash".into(),
             ]))
             .execute()
@@ -353,6 +363,7 @@ impl LanceIndex {
             let ids = col("chunk_id")?;
             let sections = col("section")?;
             let contents = col("content")?;
+            let search_texts = col("search_text")?;
             let hashes = col("source_hash")?;
             for i in 0..batch.num_rows() {
                 out.push(RankedSlice {
@@ -362,11 +373,12 @@ impl LanceIndex {
                         ordinal: i as u32,
                         section: sections.value(i).into(),
                         content: contents.value(i).into(),
+                        search_text: search_texts.value(i).into(),
                         source_hash: hashes.value(i).into(),
                     },
                     score: 0.0,
                     sources: vec!["recency".into()],
-                    title: String::new(),
+                    filename: String::new(),
                     modified_at_ns: 0,
                     frontmatter: Default::default(),
                 });
@@ -390,6 +402,7 @@ async fn open_or_create(db: &Connection) -> lancedb::Result<Table> {
                 Field::new("ordinal", DataType::Int32, false),
                 Field::new("section", DataType::Utf8, false),
                 Field::new("content", DataType::Utf8, false),
+                Field::new("search_text", DataType::Utf8, false),
                 Field::new("source_hash", DataType::Utf8, false),
             ]));
             let empty = RecordBatch::new_empty(schema.clone());
@@ -464,6 +477,7 @@ async fn open_or_create_vectors(db: &Connection, dims: usize) -> lancedb::Result
                 Field::new("ordinal", DataType::Int32, false),
                 Field::new("section", DataType::Utf8, false),
                 Field::new("content", DataType::Utf8, false),
+                Field::new("search_text", DataType::Utf8, false),
                 Field::new("source_hash", DataType::Utf8, false),
                 Field::new(
                     "vector",
@@ -491,6 +505,7 @@ fn batch_reader(rows: &[Slice]) -> lancedb::Result<Box<dyn arrow_array::RecordBa
         Field::new("ordinal", DataType::Int32, false),
         Field::new("section", DataType::Utf8, false),
         Field::new("content", DataType::Utf8, false),
+        Field::new("search_text", DataType::Utf8, false),
         Field::new("source_hash", DataType::Utf8, false),
     ]));
     let batch = RecordBatch::try_new(
@@ -510,6 +525,9 @@ fn batch_reader(rows: &[Slice]) -> lancedb::Result<Box<dyn arrow_array::RecordBa
             )) as ArrayRef,
             Arc::new(StringArray::from_iter_values(
                 rows.iter().map(|r| r.content.as_str()),
+            )) as ArrayRef,
+            Arc::new(StringArray::from_iter_values(
+                rows.iter().map(|r| r.search_text.as_str()),
             )) as ArrayRef,
             Arc::new(StringArray::from_iter_values(
                 rows.iter().map(|r| r.source_hash.as_str()),
@@ -533,6 +551,7 @@ fn vector_batch_reader(
         Field::new("ordinal", DataType::Int32, false),
         Field::new("section", DataType::Utf8, false),
         Field::new("content", DataType::Utf8, false),
+        Field::new("search_text", DataType::Utf8, false),
         Field::new("source_hash", DataType::Utf8, false),
         Field::new(
             "vector",
@@ -560,6 +579,9 @@ fn vector_batch_reader(
             )) as ArrayRef,
             Arc::new(StringArray::from_iter_values(
                 rows.iter().map(|r| r.content.as_str()),
+            )) as ArrayRef,
+            Arc::new(StringArray::from_iter_values(
+                rows.iter().map(|r| r.search_text.as_str()),
             )) as ArrayRef,
             Arc::new(StringArray::from_iter_values(
                 rows.iter().map(|r| r.source_hash.as_str()),
@@ -600,6 +622,7 @@ mod tests {
                     ordinal: 0,
                     section: "刷新令牌".into(),
                     content: "认证方案采用OAuth2协议，刷新令牌轮换策略30天。".into(),
+                    search_text: "认证\n认证方案采用OAuth2协议，刷新令牌轮换策略30天。".into(),
                     source_hash: "hash-zh".into(),
                 }],
             )
@@ -632,6 +655,7 @@ mod tests {
             ordinal: 0,
             section: String::new(),
             content: "semantic evidence".into(),
+            search_text: "semantic evidence".into(),
             source_hash: "hash".into(),
         }];
         index

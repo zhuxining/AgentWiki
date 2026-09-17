@@ -20,28 +20,20 @@ AgentWiki 使用 Wiki 根目录下的 `AGENTWIKI.md` 作为规则和指引文件
 若缺少 `AGENTWIKI.md` 就写入随包分发的默认模板。已存在的文件**永远不会被覆盖**，手改内容在
 后续每次启动都保留。
 
-默认模板声明 `required_fields: [title, type, tags]` 与 `default_type: note`，`sections` 与
-`tag_aliases` 以注释形式给出示例。对已有 Wiki，首次升级后这些必填字段才会开始生效，因此
-可能一次性出现多条 `frontmatter.required` 问题；按需修改该文件即可调整约束。
+默认模板声明 `default_type: note`。`type`、`tags`、`summary` 是系统内置必填字段，
+其他必填字段通过 `required_fields` 和 `sections[].required_fields` 配置。对已有 Wiki，
+启用内置字段后可能一次性出现多条 `frontmatter.required` 问题。
 
-若确实不需要任何规则，把 `required_fields` 设为空列表；删除文件会在下次启动时重新生成。
+若不需要额外规则，把 `required_fields` 设为空列表；内置 `type`、`tags`、`summary` 仍然生效。删除文件会在下次启动时重新生成。
 
 ## 完整示例
 
 ```markdown
 ---
-name: Team Wiki
-purpose: 团队知识、技术决策和操作指南
 default_type: note
+required_fields: []
 
-# 必填字段完全由配置决定。没有系统内置必填字段。
-required_fields:
-  - title
-  - type
-  - tags
-  - created_at
-  - updated_at
-  - owner
+# type、tags、summary 是系统内置必填字段。
 
 tag_aliases:
   architecture:
@@ -52,7 +44,6 @@ tag_aliases:
 
 sections:
   - path: decisions
-    description: 已确认的技术与产品决策
     types:
       - decision
     required_fields:
@@ -61,7 +52,6 @@ sections:
     filename_pattern: "*.md"
 
   - path: guides
-    description: 面向 Agent 和团队成员的操作指南
     types:
       - guide
     required_fields:
@@ -69,7 +59,6 @@ sections:
     filename_pattern: "*.md"
 
   - path: projects/*
-    description: 各项目自己的知识文档
     types:
       - project
       - note
@@ -91,11 +80,8 @@ sections:
 
 | 字段 | 必填 | 行为 |
 | --- | --- | --- |
-| `version` | 否 | 配置版本，默认 `1`，必须大于等于 `1` |
-| `name` | 否 | Wiki 名称，默认 `AgentWiki` |
-| `purpose` | 否 | Wiki 用途，返回给 Agent 作为组织背景 |
 | `default_type` | 否 | 文档未声明 `type` 时使用的默认类型，默认 `note` |
-| `required_fields` | 否 | 根级必填字段；不配置时不强制要求任何字段 |
+| `required_fields` | 否 | 根级额外必填字段；不配置时仅内置字段生效 |
 | `tag_aliases` | 否 | 规范标签到别名列表的映射，用于标签归一和检索匹配 |
 | `sections` | 否 | 目录或路径模式对应的细化规则 |
 
@@ -114,16 +100,15 @@ path 使用 Wiki 根目录下的相对路径，统一使用 `/`：
 | 字段 | 必填 | 行为 |
 | --- | --- | --- |
 | `path` | 是 | 相对目录或 globset 模式，如 `guides`、`projects/*` |
-| `description` | 否 | 该范围的用途说明 |
 | `types` | 否 | 该范围允许的文档类型 |
 | `required_fields` | 否 | 为匹配范围追加必填字段 |
 | `filename_pattern` | 否 | 文件名 glob，不匹配时返回 `path.filename` 错误 |
 
 ## 合并和校验语义
 
-- 必填字段完全由根级及匹配的 `sections[].required_fields` 配置决定。
-- 系统不再内置 `title`、`type`、`tags`、`created_at`、`updated_at` 等必填字段。
-- 根级和目录级必填字段会合并，重复字段只保留一次。
+- `type`、`tags`、`summary` 是所有文档的系统内置必填字段。
+- 其他必填字段由根级及匹配的 `sections[].required_fields` 配置决定。
+- 内置字段、根级字段和目录级字段会合并，重复字段只保留一次。
 - `Frontmatter` 的其他字段允许自由扩展。
 - 多条目录规则匹配时按 `path` 长度从短到长应用，等长保持声明顺序；required_fields 合并去重，类型与文件名约束按最后一条声明该约束的匹配规则生效。这里的具体性只是长度约定，不推断模式集合包含关系。
 - `filename_pattern` 只校验匹配目录下文档的文件名。
@@ -149,10 +134,13 @@ path 使用 Wiki 根目录下的相对路径，统一使用 `/`：
 
 | 错误码 | 级别 | 含义 |
 | --- | --- | --- |
+| `type.invalid` | error | `type` 不是非空字符串 |
 | `type.not_allowed` | error | 文档类型不在目录允许范围内 |
 | `frontmatter.required` | error | 缺少配置声明的必填 Frontmatter 字段 |
 | `path.filename` | error | 文件名不符合目录的 `filename_pattern` |
 | `tags.invalid` | error | `tags` 不是非空字符串列表，或标签语法无效 |
+| `summary.invalid` | error | `summary` 不是非空字符串 |
+| `summary.long` | warning | `summary` 超过建议长度（目标约 100 tokens） |
 | `tags.non_canonical` | warning | 标签是别名或大小写不规范，并给出规范标签建议 |
 | `tags.new` | warning | 标签首次出现且尚未配置为规范标签 |
 | `link.broken` | warning | 内部 Markdown 链接目标不存在 |

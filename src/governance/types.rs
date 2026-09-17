@@ -5,16 +5,8 @@ use crate::document::types::PathScope;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Rule {
-    #[serde(default = "default_version")]
-    pub version: i32,
-    #[serde(default = "default_name")]
-    pub name: String,
-    #[serde(default)]
-    pub purpose: String,
     #[serde(default = "default_doc_type")]
     pub default_type: String,
-    #[serde(default)]
-    pub scope: Option<String>,
     #[serde(default)]
     pub required_fields: Vec<String>,
     #[serde(default)]
@@ -23,12 +15,6 @@ pub struct Rule {
     pub sections: Vec<RuleSection>,
 }
 
-fn default_version() -> i32 {
-    1
-}
-fn default_name() -> String {
-    "AgentWiki".to_owned()
-}
 fn default_doc_type() -> String {
     "note".to_owned()
 }
@@ -37,8 +23,6 @@ fn default_doc_type() -> String {
 #[serde(deny_unknown_fields)]
 pub struct RuleSection {
     pub path: String,
-    #[serde(default)]
-    pub description: String,
     #[serde(default)]
     pub types: Vec<String>,
     #[serde(default)]

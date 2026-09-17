@@ -27,7 +27,7 @@ const RRF_K: f64 = 60.0;
 /// Guarantees:
 /// - never fails on a single-source problem; it surfaces in `degraded` instead;
 /// - an absent or unavailable semantic leg downgrades to keyword only;
-/// - exact title/path matches are promoted and marked `exact`;
+/// - exact filename/path matches are promoted and marked `exact`;
 /// - related documents stop at one hop.
 pub async fn run_query(ctx: &Projection, q: &ContextQuery) -> Result<SearchResult> {
     let mut degraded = Vec::new();
@@ -191,17 +191,17 @@ pub async fn run_query(ctx: &Projection, q: &ContextQuery) -> Result<SearchResul
 
     for hit in &mut candidates {
         let path = hit.slice.path.0.to_string();
-        let (title, fingerprint, frontmatter) = ctx
+        let lookup_path = path.clone();
+        let (fingerprint, frontmatter) = ctx
             .meta
             .with(move |store| {
                 Ok((
-                    store.title_for(&path)?.unwrap_or_default(),
-                    store.ledger_fingerprint(&path)?,
-                    store.frontmatter_for_path(&path)?,
+                    store.ledger_fingerprint(&lookup_path)?,
+                    store.frontmatter_for_path(&lookup_path)?,
                 ))
             })
             .await?;
-        hit.title = title;
+        hit.filename = display_name(&path);
         hit.modified_at_ns = fingerprint.mtime_ns;
         hit.frontmatter = frontmatter;
     }
@@ -225,20 +225,21 @@ pub async fn run_query(ctx: &Projection, q: &ContextQuery) -> Result<SearchResul
     })
 }
 
-/// Exact-match candidates: documents whose title equals the query text
-/// (case-insensitive, trimmed). They rank at the top of the RRF fusion and
-/// carry the `exact` source. Bounded to the query limit.
+/// Exact-match candidates: indexed paths whose filename stem or relative path
+/// equals the query text (case-insensitive, trimmed). They rank at the top of
+/// the RRF fusion and carry the `exact` source.
 async fn exact_matches(ctx: &Projection, q: &ContextQuery) -> Vec<RankedSlice> {
     if q.query.trim().is_empty() || q.query.chars().count() > 64 {
         return Vec::new();
     }
     let wanted = q.query.trim().to_lowercase();
-    let Ok(titles) = ctx.meta.with(|store| store.all_titles()).await else {
+    let Ok(paths) = ctx.meta.with(|store| store.all_paths()).await else {
         return Vec::new();
     };
     let mut out = Vec::new();
-    for (path, title) in titles {
-        if title.to_lowercase() == wanted
+    for path in paths {
+        let filename = display_name(&path).to_lowercase();
+        if (path.to_lowercase() == wanted || filename == wanted)
             && let Ok(slices) = ctx.index.slices_for_path(&path).await
         {
             out.extend(slices.into_iter().take(q.limit.clamp(1, 20)));
@@ -272,17 +273,11 @@ async fn related_for(ctx: &Projection, path: &str) -> Vec<RelatedDocument> {
             crate::retrieval::types::RelationDirection::Incoming
         };
         let target = edge.to.0.to_string();
-        let title = ctx
-            .meta
-            .with(move |store| store.title_for(&target))
-            .await
-            .ok()
-            .flatten()
-            .unwrap_or_default();
+        let title = display_name(&target);
         let context = section_context(ctx, &edge.from, &edge.section_source).await;
         out.push(RelatedDocument {
             path: edge.to,
-            title,
+            filename: title,
             relation_type: edge.relation_type,
             direction,
             status: edge.status,
@@ -294,6 +289,13 @@ async fn related_for(ctx: &Projection, path: &str) -> Vec<RelatedDocument> {
         }
     }
     out
+}
+
+fn display_name(path: &str) -> String {
+    camino::Utf8Path::new(path)
+        .file_stem()
+        .unwrap_or(path)
+        .to_owned()
 }
 
 /// Recover the source text of the section that declared a relation, from the

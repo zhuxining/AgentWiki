@@ -1,19 +1,10 @@
 ---
-name: AgentWiki 示例知识库
-purpose: 为 Agent 提供可检索的团队知识、操作指南和项目资料
 
-required_fields:
-  - title
-  - type
-  - tags
-  - created_at
-  - updated_at
-  - owner
 default_type: note
+required_fields: []
 
 sections:
   - path: decisions
-    description: 已确认的技术与产品决策
     types:
       - decision
     required_fields:
@@ -22,7 +13,6 @@ sections:
     filename_pattern: "*.md"
 
   - path: guides
-    description: 面向 Agent 和团队成员的操作指南
     types:
       - guide
     required_fields:
@@ -30,7 +20,6 @@ sections:
     filename_pattern: "*.md"
 
   - path: projects/*
-    description: 各项目自己的知识文档
     types:
       - project
       - note
@@ -39,7 +28,6 @@ sections:
       - project
 
   - path: notes
-    description: 一般知识与记录
     types:
       - note
       - guide
@@ -56,8 +44,10 @@ tag_aliases:
 
 > **本文档定位**：以下使用指引采用当前 Rust 实现的规则契约。这是规则文件 `AGENTWIKI.md` 的**完整参考示例**，演示 `sections`、
 > `tag_aliases` 等进阶能力。新建 Wiki 时实际写入的是代码内置的**精简默认模板**
-> （`src/document/parse.rs` 的 `DEFAULT_AGENTWIKI`，仅 `name` / `purpose` / `required_fields` /
-> `default_type`）；规则文件已存在时永远不被覆盖。把本文件复制到 Wiki 根目录即启用完整规则。
+> （`src/document/parse.rs` 的 `DEFAULT_AGENTWIKI`，包含 `default_type` 和空的
+> `required_fields` 扩展入口）；
+> `type`、`tags`、`summary` 是系统内置必填字段，规则文件已存在时永远不被覆盖。
+> 把本文件复制到 Wiki 根目录即启用完整规则。
 
 # AgentWiki 使用指南
 

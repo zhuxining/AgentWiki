@@ -7,7 +7,7 @@ pub struct RankedSlice {
     pub slice: Slice,
     pub score: f64,
     pub sources: Vec<String>,
-    pub title: String,
+    pub filename: String,
     pub modified_at_ns: i64,
     pub frontmatter: Frontmatter,
 }
@@ -15,7 +15,7 @@ pub struct RankedSlice {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RelatedDocument {
     pub path: PathScope,
-    pub title: String,
+    pub filename: String,
     pub relation_type: String,
     pub direction: RelationDirection,
     #[serde(rename = "resolution_status")]

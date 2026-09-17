@@ -38,6 +38,33 @@ async fn explicit_formatting_preserves_yaml_and_is_idempotent() {
     );
 }
 
+#[tokio::test]
+async fn validation_reports_formatting_without_writing_by_default() {
+    let wiki = tempfile::tempdir().unwrap();
+    let projection = tempfile::tempdir().unwrap();
+    let file = wiki.path().join("a.md");
+    let original = "# Title\n\n-  item\n";
+    std::fs::write(&file, original).unwrap();
+    let app = open(&wiki, &projection).await;
+
+    let result = app
+        .validate(ValidationRequest {
+            scope: ValidationScope::Document(PathScope("a.md".into())),
+            fix_format: false,
+        })
+        .await
+        .unwrap();
+
+    assert!(result.formatted_paths.is_empty());
+    assert!(
+        result
+            .issues
+            .iter()
+            .any(|issue| { issue.path == "a.md" && issue.kind == "markdown.formatting" })
+    );
+    assert_eq!(std::fs::read_to_string(file).unwrap(), original);
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn validation_never_follows_external_symlinks() {

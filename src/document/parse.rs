@@ -12,23 +12,15 @@ use crate::error::{AgentWikiError, Result};
 
 /// Default `AGENTWIKI.md` seeded into a new wiki root.
 ///
-/// This is the *minimal* starter template (name / purpose / required_fields /
-/// default_type). `docs/AGENTWIKI.md` is the complete reference example with
+/// This is the *minimal* starter template (`default_type` and an empty
+/// `required_fields` extension point). Built-in required fields are enforced by
+/// governance. `docs/AGENTWIKI.md` is the complete reference example with
 /// `sections` and `tag_aliases`; the two need not match verbatim, and existing
 /// rule files are never overwritten. Required fields are entirely driven by the
 /// rule file — the system defines none by default beyond this modest starter set.
 pub const DEFAULT_AGENTWIKI: &str = "---\n\
-name: AgentWiki 示例知识库\n\
-purpose: 为 Agent 提供可检索的团队知识、操作指南和项目资料\n\
-\n\
-required_fields:\n\
-  - title\n\
-  - type\n\
-  - tags\n\
-  - created_at\n\
-  - updated_at\n\
-  - owner\n\
 default_type: note\n\
+required_fields: []\n\
 ---\n\
 \n\
 # Wiki 使用指南\n\
@@ -131,16 +123,9 @@ pub fn read_document_with_body(root: &Utf8Path, path: &PathScope) -> Result<(Doc
             message: "malformed YAML frontmatter".into(),
         });
     }
-    let title = frontmatter
-        .get("title")
-        .and_then(|v| v.as_str())
-        .map(str::to_string)
-        .unwrap_or_default();
-
     Ok((
         Document {
             path: path.clone(),
-            title,
             frontmatter,
             fingerprint: Fingerprint {
                 content_hash: hex::encode(Sha256::digest(&bytes)),

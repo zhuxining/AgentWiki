@@ -35,7 +35,8 @@ metadata_filters: object | null
   "results": [
     {
       "path": "decisions/auth.md",
-      "title": "认证方案",
+      "filename": "auth",
+      "summary": "认证服务使用 OAuth2 管理访问令牌。",
       "section": "刷新令牌",
       "snippet": "与查询相关的证据片段",
       "rank_score": 0.0325,
@@ -45,7 +46,7 @@ metadata_filters: object | null
       "related": [
         {
           "path": "architecture/retrieval.md",
-          "title": "检索架构",
+          "filename": "retrieval",
           "relation_type": "depends_on",
           "direction": "outgoing",
           "resolution_status": "resolved",
@@ -114,7 +115,7 @@ path 必须为 Wiki 内的普通 Markdown 文件；AGENTWIKI.md 不进入普通�
     {
       "path": "decisions/auth.md",
       "kind": "frontmatter.required",
-      "message": "缺少规则要求的 owner 字段",
+      "message": "缺少内置必填字段 `tags`",
       "severity": "error"
     }
   ],
@@ -122,7 +123,7 @@ path 必须为 Wiki 内的普通 Markdown 文件；AGENTWIKI.md 不进入普通�
 }
 ```
 
-issues 是检查或修复后的问题集合，severity 为 error 或 warning；formatted_paths 仅列出本次成功写回的路径，只读或无变化时为空。格式修复成功不意味着业务校验全部通过。
+issues 是检查或修复后的问题集合，severity 为 error 或 warning；MCP 返回的 path 和 formatted_paths 都是 Wiki 根目录下的绝对路径，可直接交给原生文件工具使用。格式修复成功不意味着业务校验全部通过。只读或无变化时 formatted_paths 为空。
 
 CLI 对应使用 `validate-wiki --path <path> --fix-format` 或 `validate-wiki --full --fix-format`，均为迁移后新增行为。保留现有 CLI 不带 path 的全库只读校验，但不得据此隐式允许全库格式写回。
 

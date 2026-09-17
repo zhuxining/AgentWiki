@@ -28,6 +28,11 @@ pub struct AgentWiki {
 }
 
 impl AgentWiki {
+    /// Return the canonical Wiki root used for protocol-facing absolute paths.
+    pub fn wiki_root(&self) -> &Utf8Path {
+        &self.root
+    }
+
     pub async fn open(options: OpenOptions) -> Result<Self> {
         tokio::fs::create_dir_all(&options.wiki_root)
             .await

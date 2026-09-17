@@ -24,6 +24,6 @@ impl Embedder {
 }
 
 /// Stable input representation used for chunk embeddings.
-pub fn input_text(title: &str, tags: &[String], section: &str, content: &str) -> String {
-    format!("{title}\n{}\n{section}\n{content}", tags.join(","))
+pub fn input_text(search_text: &str, tags: &[String]) -> String {
+    format!("{search_text}\n{}", tags.join(","))
 }

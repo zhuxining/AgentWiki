@@ -16,7 +16,6 @@ pub type Frontmatter = serde_json::Map<String, serde_json::Value>;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Document {
     pub path: PathScope,
-    pub title: String,
     pub frontmatter: Frontmatter,
     pub fingerprint: Fingerprint,
 }
@@ -28,6 +27,7 @@ pub struct Slice {
     pub ordinal: u32,
     pub section: String,
     pub content: String,
+    pub search_text: String,
     pub source_hash: String,
 }
 
