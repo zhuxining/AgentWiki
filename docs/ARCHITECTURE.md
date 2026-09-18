@@ -16,10 +16,10 @@ HTTP API、云同步、Web UI、查询 LLM、实体自动抽取和操作审计�
 | Markdown / 规则 / 校验 | 已接入 pulldown-cmark、text-splitter、globset、dprint；格式修复仍需显式 `--fix-format` |
 | 同步 / LanceDB | 文件指纹、向量输入哈希和投影格式与检索行共同保存在 LanceDB |
 | 检索 / 图谱 | LanceDB 统一承接文档与片段、结构化过滤、精确匹配、关系、FTS 和可选向量查询 |
-| MCP | `src/mcp.rs` 已用 rmcp 3.3 提供三个 stdio 工具 |
+| MCP | `src/mcp.rs` 已用官方 MCP SDK 提供三个 stdio 工具 |
 | 语义 / 格式修复 | FastEmbed 已接入同步与 LanceDB 向量投影；默认关闭模型，格式修复提供 CLI 显式入口 |
 
-旧 Python 实现保留在 `legacy/python/`，不恢复维护。LanceDB 0.38 的本地构建需要 `protoc`，CI 与开发环境应预装并通过 `PROTOC` 指定。
+LanceDB 的本地构建需要 `protoc`，CI 与开发环境应预装并通过 `PROTOC` 指定。
 
 ## 2. 组件与工程工具链
 
@@ -31,10 +31,10 @@ HTTP API、云同步、Web UI、查询 LLM、实体自动抽取和操作审计�
 | Markdown | pulldown-cmark | 标题、链接、源位置的领域映射 |
 | 章节切分 | text-splitter | 在标题章节内切分，保留章节路径 |
 | YAML | serde_yaml + serde | 直接反序列化规则类型和 JSON 兼容元数据 |
-| 文件遍历 / glob | walkdir / globset | 安全路径与规则合并 |
+| 文件遍历 / glob | 标准库 / globset | 安全路径与规则合并 |
 | 格式化 | dprint-plugin-markdown | 检查、显式修复、安全写回 |
-| CLI / MCP | clap / 官方 rmcp 3.3 | 参数、协议、序列化；MCP SDK 由 mcp feature 隔离 |
-| 异步 / 日志 / 错误 | tokio / tracing / thiserror + anyhow | 生命周期与系统边界上下文 |
+| CLI / MCP | clap / 官方 MCP SDK | 参数、协议、序列化；MCP SDK 由 mcp feature 隔离 |
+| 异步 / 错误 | tokio / thiserror + anyhow | 生命周期与系统边界上下文 |
 | 路径 / 指纹 / 锁 | camino / sha2 / fs2 | UTF-8 路径、变更确认、跨进程写协调 |
 
 LanceDB 承接 FTS、向量查询、过滤与原生 RRF；当前 FTS 使用 Lance 默认 tokenizer，不在应用层自建分词器或通用融合算法。中文专名、混合文本和代码标识符的效果必须用固定语料实测，不能由组件支持本身推断召回质量。[FTS 配置](https://docs.rs/lancedb/latest/lancedb/index/scalar/struct.FtsIndexBuilder.html)、[RRF](https://docs.rs/lancedb/latest/lancedb/rerankers/rrf/struct.RRFReranker.html)
@@ -43,11 +43,11 @@ FastEmbed 首个支持 `BAAI/bge-small-zh-v1.5`，适配其模型枚举和资源
 
 Markdown 标题、标准链接和 Wiki 链接使用解析器事件，不自行用字符串扫描替代解析。超长章节交给切分器；保留章节面包屑、源位置及原文证据，不手写滑动窗口。[解析选项](https://docs.rs/pulldown-cmark/latest/pulldown_cmark/struct.Options.html)、[切分器](https://docs.rs/text-splitter/latest/text_splitter/)
 
-配置字段少时直接校验；移除 validator、watcher 和其他没有实际消费者的预留依赖。保留 Cargo、rustfmt、Clippy、Rust 测试和 tempfile；rstest、insta、criterion 仅在实际测试或基准需要时保留。不新增 ORM、任务编排框架、通用 Repository 或插件系统。
+配置字段少时直接校验；移除 validator、watcher 和其他没有实际消费者的预留依赖。保留 Cargo、rustfmt、Clippy、Rust 测试和 tempfile；不为未落地的测试或基准能力预留依赖。不新增 ORM、任务编排框架、通用 Repository 或插件系统。
 
-edition 保持 2024，MSRV 保持 1.98。具体依赖版本及 feature 在源码迁移时按兼容性解析，交由 Cargo 更新锁文件；本轮不宣称新组件已通过本项目编译或性能验证。
+edition 保持 2024，依赖与 feature 以 Cargo.toml 为准；本轮不宣称新组件已通过本项目编译或性能验证。
 
-LanceDB 的 Rust 依赖链会编译 Protocol Buffers schema，开发机和 CI 需要预装 `protoc`（按平台安装并验证 `protoc --version`）。仓库不携带或提交该工具二进制；缺失时构建应给出明确环境错误。
+LanceDB 的 Rust 依赖链会编译 Protocol Buffers schema，开发机和 CI 需要预装 `protoc`（按平台安装并确认 `protoc` 可执行）。仓库不携带或提交该工具二进制；缺失时构建应给出明确环境错误。
 
 ## 3. 目标目录与依赖
 
@@ -177,7 +177,7 @@ Wiki 根目录的 `AGENTWIKI.md` 是唯一组织规则入口：Frontmatter 是�
 2. 疑似变化文档读取一次并计算内容哈希；内容相同只更新 document 行的文件指纹，不重复解析和生成向量（向量缺失时除外）。
 3. 变化内容解析一次，供片段、元数据、关系和校验复用。解析失败保留该文档已有有效投影，记录路径和错误；不得将读取失败当成文件删除。
 4. 唯一内容哈希配对的删除与新增识别为移动，保留文档身份；有歧义则按增删处理。
-5. 更新关键词、文档信息和关系；向量按模型身份和实际输入哈希复用或同步批量计算。模型身份包含适配后的版本和维度，变更时旧向量失效。
+5. 更新关键词、文档信息和关系；向量按模型身份和实际输入哈希复用或同步批量计算。模型身份包含适配后的模型标识和维度，变更时旧向量失效。
 6. 每个文档的 document、fragment、relation 行通过一次 `merge_insert` 提交；语义失败仍提交词法字段、记录 `vector_input_hash` 并将向量留空，下次同步重新构造该文档投影并重试向量。
 
 LanceDB 统一保存 document/fragment、结构化过滤字段、显式关系和同步指纹；单文档通过 `merge_insert` 一次提交，查询统一针对当前 `wiki_rows` 表。写操作由 fs2 跨进程锁协调，部分完成操作必须幂等重试。
@@ -202,11 +202,11 @@ document_limit 默认 5，fragment_limit 默认 10，范围均为 1..20。关系
 
 正常无匹配、主动关闭语义不是故障。启用模型但不可用、投影失败、关系声明非法等进入 degraded；实际命中来源进入 match_sources，rank_score 不代表概率或跨查询可比较的置信度。路径非法或请求不合法返回错误，不伪装为空结果。
 
-语义阈值按模型和实际嵌入文本在固定语料中标定，包含标题、标签、章节和正文。不得沿用旧 Python 实验阈值，也不宣称单阈值能可靠分离主题相邻的无答案查询。
+语义阈值按模型和实际嵌入文本在固定语料中标定，包含标题、标签、章节和正文。不得沿用未经当前实现验证的历史阈值，也不宣称单阈值能可靠分离主题相邻的无答案查询。
 
 ### 4.4 校验与显式格式修复
 
-规则合并、标签建议和格式定义以 RULES 为准，协议以 MCP_TOOLS 为准。默认只报告；fix_format=true 才允许改写请求范围内的格式，并在写回后重新校验。
+规则合并、标签建议和格式定义以 RULES 为准，协议以 MCP_TOOLS 为准。`type`、`tags`、`summary` 是内置必填字段，其他必填字段由规则声明。默认只报告；fix_format=true 才允许改写请求范围内的格式，并在写回后重新校验。
 
 采用内置 dprint，保留 Frontmatter 原文和代码块内部，不修正标签、链接、标题语义或业务内容。无格式变化不写回，不触发无意义的修改时间变化。
 
@@ -225,7 +225,7 @@ document_limit 默认 5，fragment_limit 默认 10，范围均为 1..20。关系
 | governance/* | 规则契约、globset、dprint、校验与格式修复 |
 | app.rs | AgentWiki 单次装配 Projection，并提供异步用例接口 |
 
-功能域目录与异步资源边界已经落地；后续只针对 MCP 结果结构、模型缓存策略和检索质量做增量演进。规则示例与代码内精简模板用途不同，默认模板不直接替换成完整示例。
+功能域目录与异步资源边界已经落地；后续只针对模型缓存策略和检索质量做增量演进。规则示例与代码内精简模板用途不同，默认模板不直接替换成完整示例。
 
 验收场景：
 

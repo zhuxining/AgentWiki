@@ -1,6 +1,6 @@
 # AgentWiki MCP 契约
 
-> **当前实现边界。** `src/mcp.rs` 已提供三个可调用工具并采用官方 rmcp 3.3，stdio 入口由 `mcp` feature 隔离。返回值当前以 JSON 字符串或原文字符串承载，复杂结果结构会在后续协议兼容调整中继续收敛。
+> **当前实现边界。** `src/mcp.rs` 已提供三个可调用工具并采用官方 MCP SDK，stdio 入口由 `mcp` feature 隔离。复杂结果统一由应用层组装后序列化为 JSON 字符串；本文件描述的是当前契约。
 
 MCP 保留三个工具：任务检索、规则获取和规范校验。已知路径读取和文档增删改由 Agent 原生工具完成；显式格式修复是校验工具的有限写入能力，不提供通用文件 CRUD。
 
@@ -26,10 +26,10 @@ order: "relevance" | "modified_desc" = "relevance"
 include_relations: bool = false
 ```
 
-- 空 query 且空 keywords 返回结构化过滤后的最近修改文档；非空 query 同时用于 jieba BM25 和可选语义检索。
+- 空 query 且空 keywords 返回结构化过滤后的最近修改文档；非空 query 使用 LanceDB FTS，并在启用模型时追加语义检索。
 - keywords 是 Agent 显式提供的词法查询；any 取任一命中，all 要求同一检索单元命中全部关键词。AgentWiki 不从 query 自动推导 keywords。
 - scope 是 Wiki 相对目录或文档，空值表示全库；越界和非法参数返回错误。
-- tags 全部满足，note_types 匹配任一类型，metadata_filters 按 Frontmatter 字段等值匹配；这些条件在 BM25/向量召回前下推到 LanceDB，不执行 top-k 后过滤。
+- tags 全部满足，note_types 匹配任一类型，metadata_filters 按 Frontmatter 字段等值匹配；这些条件在 LanceDB 的 FTS/向量召回前下推，不执行 top-k 后过滤。
 - modified_after_ns/modified_before_ns 过滤真实文件 mtime；order 由 Agent 显式指定，内核不从查询文本猜测时间意图。
 - 每篇文档生成一个 document 单元，正文统一按 Markdown 标题切分，超长章节再用 text-splitter 切分。文档和片段分别排名。
 
@@ -79,7 +79,7 @@ scope: str = ""
 
 返回 source_modified_at_ns 和 source_size 表示规则文件指纹，只用于判断规则内容是否变化。known_tags 随文档投影变化更新，不能仅按规则文件指纹缓存。调用时先确认文档投影新鲜度；为读取规则不启动无关 embedding 计算。
 
-新建、移动或首次修改陌生范围前调用；同一范围的连续编辑可复用规则，但不得将规则文件未变理解为标签集合未变。系统没有内置必填字段，新标签只警告，允许扩展 Frontmatter。
+新建、移动或首次修改陌生范围前调用；同一范围的连续编辑可复用规则，但不得将规则文件未变理解为标签集合未变。`type`、`tags`、`summary` 是内置必填字段；新标签只警告，允许扩展 Frontmatter。
 
 ## validate_wiki
 

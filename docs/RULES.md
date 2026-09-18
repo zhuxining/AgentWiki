@@ -121,7 +121,7 @@ path 使用 Wiki 根目录下的相对路径，统一使用 `/`：
 
 ## 格式检查与修复
 
-使用内置 dprint-plugin-markdown，取消旧 mdformat 等价承诺；不需要额外安装 Python、Node 或格式化命令。统一配置使用 LF、80 列目标宽度、保持原有段落换行（TextWrap::Maintain），其他 Markdown 风格使用锁定组件版本的默认值，不新增用户格式配置字段。[配置接口](https://docs.rs/dprint-plugin-markdown/latest/dprint_plugin_markdown/configuration/struct.ConfigurationBuilder.html)
+使用内置 dprint-plugin-markdown，取消旧 mdformat 等价承诺；不需要额外安装 Python、Node 或格式化命令。统一配置使用 LF、80 列目标宽度、保持原有段落换行（TextWrap::Maintain），其他 Markdown 风格使用组件默认值，不新增用户格式配置字段。[配置接口](https://docs.rs/dprint-plugin-markdown/latest/dprint_plugin_markdown/configuration/struct.ConfigurationBuilder.html)
 
 - 检查时在内存中格式化并比较原文，存在差异报告 markdown.formatting。
 - fix_format 默认 false；单文件修复指定 path，全库修复显式 full=true，两者互斥。未指定范围不能触发写回，参数详见 [MCP 契约](MCP_TOOLS.md)。

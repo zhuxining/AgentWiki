@@ -8,19 +8,19 @@
 - 少写通用代码，优先标准库和已采用组件；新增包必须替代明确的自写职责，不为预留能力引入依赖。
 - 源码已按 LanceDB 架构完成基础目录迁移；修改前仍需读取实际 Cargo.toml、源码和测试，不能仅凭设计文档推断行为。
 - 目录迁移与依赖切换已经落地，后续改动保持现有功能边界，不重新引入旧的扁平模块。
-- Rust 为唯一维护实现，legacy/python 为历史归档，不参与开发或 Rust 验收。
+- Rust 是唯一维护实现；工程验收只针对当前 Rust 代码。
 - 复杂改动先明确目标、边界与验收；存在影响契约的歧义时说明取舍，不擅自扩大范围。
 
 ## 工具链与依赖
 
-- 保持单 package、共享库和 CLI/MCP 两个二进制；edition 2024，当前 MSRV 1.98。工具链、版本和 feature 以 Cargo.toml 为准。
+- 保持单 package、共享库和 CLI/MCP 两个二进制；使用 edition 2024；工具链和 feature 以 Cargo.toml 为准。
 - 目标检索使用 LanceDB，推理使用 FastEmbed，元数据使用 rusqlite bundled。SQLite 不执行全文或向量查询。
-- 文档解析使用 pulldown-cmark、serde_yaml，长章节切分使用 text-splitter，遍历使用 walkdir，模式匹配使用 globset，格式化使用 dprint-plugin-markdown。
-- CLI 使用 clap，MCP 使用官方 rmcp 3.3 并由 mcp feature 隔离；核心库不依赖 MCP SDK。移除无消费者的旧 SDK、watcher、配置校验与测试依赖，不建立替代框架。
-- 复用 tokio、serde、camino、tracing、thiserror 和 anyhow；少量配置条件直接校验。检查现有依赖是否已提供能力，再决定新增依赖。
-- 收窄依赖 feature；更改清单后由 Cargo 解析锁文件，不手改 Cargo.lock。新增 API、语法或依赖不得无意提高 MSRV。
+- 文档解析使用 pulldown-cmark、serde_yaml，长章节切分使用 text-splitter，目录遍历使用标准库，模式匹配使用 globset，格式化使用 dprint-plugin-markdown。
+- CLI 使用 clap，MCP 使用官方 SDK 并由 mcp feature 隔离；核心库不依赖 MCP SDK。移除无消费者的旧 SDK、watcher、配置校验与测试依赖，不建立替代框架。
+- 复用 tokio、serde、camino、thiserror 和 anyhow；少量配置条件直接校验。检查现有依赖是否已提供能力，再决定新增依赖。
+- 收窄依赖 feature；更改清单后由 Cargo 解析锁文件，不手改 Cargo.lock。新增 API、语法或依赖不得无意扩大工具链要求。
 - 审查依赖维护情况、安全接口、许可证和原生构建成本；允许依赖内部使用 unsafe 或原生库，不要求传递依赖树无 unsafe。cargo audit 不能替代依赖审查。
-- LanceDB 当前构建链需要 `protoc`；开发机和 CI 必须预装与平台匹配的 Protocol Buffers 编译器，并在构建前确认 `protoc --version`。不把生成的二进制提交到仓库。
+- LanceDB 当前构建链需要 `protoc`；开发机和 CI 必须预装与平台匹配的 Protocol Buffers 编译器，并在构建前确认 `protoc` 可执行文件。不把生成的二进制提交到仓库。
 
 ## 结构与资源所有权
 
@@ -95,14 +95,6 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 git diff --check
-```
-
-MCP 相关改动另运行：
-
-```bash
-cargo build --features mcp --bin agentwiki-mcp
-cargo clippy --workspace --all-targets --features mcp -- -D warnings
-cargo test --workspace --features mcp
 ```
 
 纯文档变更检查链接、契约一致、当前/目标状态和 git diff --check，无需运行无关 Rust 测试。CI 与本地检查保持一致；当前仓库没有 CI 配置，不声称已接入。
