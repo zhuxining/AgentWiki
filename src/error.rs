@@ -16,7 +16,6 @@ use camino::Utf8PathBuf;
 /// - [`AgentWikiError::Io`] — filesystem access failure (hard, but per-file
 ///   failures are caught and downgraded into diagnostics by `sync`).
 /// - [`AgentWikiError::Parse`] — Markdown/YAML parse failure for one document.
-/// - [`AgentWikiError::Storage`] — SQLite metadata store failure.
 /// - [`AgentWikiError::Index`] — LanceDB index failure (rebuildable).
 /// - [`AgentWikiError::Embedding`] — optional semantic leg unavailable; must
 ///   downgrade to keyword search, never break retrieval.
@@ -40,9 +39,6 @@ pub enum AgentWikiError {
         /// Human-readable reason.
         message: String,
     },
-
-    #[error("metadata store (SQLite) error: {0}")]
-    Storage(#[from] rusqlite::Error),
 
     #[error("search index (LanceDB) error: {0}")]
     Index(String),

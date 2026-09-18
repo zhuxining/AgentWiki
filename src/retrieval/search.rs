@@ -1,16 +1,13 @@
 //! Query-faithful retrieval orchestration.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use crate::document::types::{PathScope, RetrievalUnitKind};
 use crate::error::Result;
 use crate::projection::Projection;
 use crate::retrieval::types::{
-    ContextQuery, KeywordMode, RankedSlice, RelatedDocument, SearchOrder, SearchResult,
-    SearchStrategy,
+    ContextQuery, RankedSlice, RelatedDocument, SearchOrder, SearchResult, SearchStrategy,
 };
-
-const RRF_K: f64 = 60.0;
 
 pub async fn run_query(ctx: &Projection, q: &ContextQuery) -> Result<SearchResult> {
     let mut degraded = Vec::new();
@@ -138,41 +135,60 @@ async fn retrieve_kind(
     include_exact: bool,
     degraded: &mut Vec<String>,
 ) -> Vec<RankedSlice> {
-    let candidate_limit = result_limit.saturating_mul(5).clamp(50, 200);
-    let mut legs: Vec<(&str, Vec<RankedSlice>)> = Vec::new();
-    if !q.query.trim().is_empty() {
+    let candidate_limit = result_limit.saturating_mul(5).clamp(20, 100);
+    let keyword_text = match q.keyword_mode {
+        crate::retrieval::types::KeywordMode::All => q.keywords.join(" AND "),
+        crate::retrieval::types::KeywordMode::Any => q.keywords.join(" OR "),
+    };
+    let text = if q.keywords.is_empty() {
+        q.query.clone()
+    } else if q.query.trim().is_empty() {
+        keyword_text
+    } else {
+        format!("{} {}", q.query, keyword_text)
+    };
+    let mut fused = if let Some(vector) = query_vector {
         match ctx
             .index
-            .search(q, &q.query, kind, candidate_limit, "keyword")
+            .hybrid_search(q, &text, vector, kind, candidate_limit)
             .await
         {
-            Ok(hits) => legs.push(("keyword", hits)),
-            Err(error) => degraded.push(format!("keyword search unavailable: {error}")),
+            Ok(hits) => hits,
+            Err(error) => {
+                degraded.push(format!("hybrid search unavailable: {error}"));
+                ctx.index
+                    .search(q, &text, kind, candidate_limit, "keyword")
+                    .await
+                    .unwrap_or_default()
+            }
         }
-    }
-    if !q.keywords.is_empty() {
-        match keyword_hits(ctx, q, kind, candidate_limit).await {
-            Ok(hits) => legs.push(("keywords", hits)),
-            Err(error) => degraded.push(format!("explicit keyword search unavailable: {error}")),
-        }
-    }
-    if let Some(vector) = query_vector {
+    } else {
         match ctx
             .index
-            .vector_search(q, vector, kind, candidate_limit)
+            .search(q, &text, kind, candidate_limit, "keyword")
             .await
         {
-            Ok(hits) => legs.push(("semantic", hits)),
-            Err(error) => degraded.push(format!("vector search unavailable: {error}")),
+            Ok(hits) => hits,
+            Err(error) => {
+                degraded.push(format!("keyword search unavailable: {error}"));
+                Vec::new()
+            }
         }
-    }
+    };
     if include_exact {
-        let hits = exact_matches(ctx, q).await;
-        if !hits.is_empty() {
-            legs.push(("exact", hits));
-        }
+        let exact = exact_matches(ctx, q).await;
+        let mut seen = exact
+            .iter()
+            .map(|h| h.slice.chunk_id.clone())
+            .collect::<HashSet<_>>();
+        let mut prioritized = exact;
+        prioritized.extend(
+            fused
+                .into_iter()
+                .filter(|h| seen.insert(h.slice.chunk_id.clone())),
+        );
+        fused = prioritized;
     }
-    let mut fused = fuse(&legs);
     if q.order == SearchOrder::ModifiedDesc {
         fused.sort_by(|a, b| {
             b.slice
@@ -183,91 +199,6 @@ async fn retrieve_kind(
     }
     fused.truncate(result_limit.clamp(1, 20));
     fused
-}
-
-async fn keyword_hits(
-    ctx: &Projection,
-    q: &ContextQuery,
-    kind: RetrievalUnitKind,
-    limit: usize,
-) -> Result<Vec<RankedSlice>> {
-    if q.keyword_mode == KeywordMode::Any {
-        let mut by_id: HashMap<String, RankedSlice> = HashMap::new();
-        for keyword in &q.keywords {
-            for hit in ctx
-                .index
-                .search(q, keyword, kind, limit, "keywords")
-                .await?
-            {
-                by_id
-                    .entry(hit.slice.chunk_id.clone())
-                    .and_modify(|current| current.score += hit.score)
-                    .or_insert(hit);
-            }
-        }
-        let mut hits = by_id.into_values().collect::<Vec<_>>();
-        hits.sort_by(|a, b| b.score.total_cmp(&a.score));
-        hits.truncate(limit);
-        return Ok(hits);
-    }
-    let mut legs = Vec::new();
-    for keyword in &q.keywords {
-        legs.push(
-            ctx.index
-                .search(q, keyword, kind, limit, "keywords")
-                .await?,
-        );
-    }
-    let mut counts: HashMap<String, usize> = HashMap::new();
-    let mut by_id = HashMap::new();
-    for leg in legs {
-        let mut seen = HashSet::new();
-        for hit in leg {
-            if seen.insert(hit.slice.chunk_id.clone()) {
-                *counts.entry(hit.slice.chunk_id.clone()).or_default() += 1;
-                by_id.entry(hit.slice.chunk_id.clone()).or_insert(hit);
-            }
-        }
-    }
-    let required = q.keywords.len();
-    let mut hits = counts
-        .into_iter()
-        .filter(|(_, count)| *count == required)
-        .filter_map(|(id, _)| by_id.remove(&id))
-        .collect::<Vec<_>>();
-    hits.sort_by(|a, b| b.score.total_cmp(&a.score));
-    hits.truncate(limit);
-    Ok(hits)
-}
-
-fn fuse(legs: &[(&str, Vec<RankedSlice>)]) -> Vec<RankedSlice> {
-    let mut scores: HashMap<String, (f64, Vec<String>)> = HashMap::new();
-    let mut hits: HashMap<String, RankedSlice> = HashMap::new();
-    for (source, leg) in legs {
-        for (rank, hit) in leg.iter().enumerate() {
-            hits.entry(hit.slice.chunk_id.clone())
-                .or_insert_with(|| hit.clone());
-            let entry = scores
-                .entry(hit.slice.chunk_id.clone())
-                .or_insert_with(|| (0.0, Vec::new()));
-            entry.0 += 1.0 / (RRF_K + rank as f64 + 1.0);
-            if !entry.1.iter().any(|existing| existing == source) {
-                entry.1.push((*source).to_owned());
-            }
-        }
-    }
-    let mut out = scores
-        .into_iter()
-        .filter_map(|(id, (score, sources))| {
-            hits.remove(&id).map(|mut hit| {
-                hit.score = score;
-                hit.sources = sources;
-                hit
-            })
-        })
-        .collect::<Vec<_>>();
-    out.sort_by(|a, b| b.score.total_cmp(&a.score));
-    out
 }
 
 async fn exact_matches(ctx: &Projection, q: &ContextQuery) -> Vec<RankedSlice> {

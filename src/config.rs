@@ -39,7 +39,7 @@ impl AppConfig {
             })?;
         Ok(self
             .projection_dir
-            .join("indexes")
+            .join("lancedb")
             .join(hex::encode(Sha256::digest(root.as_str()))))
     }
     pub fn load() -> Result<AppConfig> {

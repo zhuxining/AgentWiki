@@ -4,7 +4,7 @@
 
 AgentWiki 是本地 Markdown Wiki 的检索与治理层，面向一万篇以内的个人或团队知识库。目标是少写、少维护通用代码，复用成熟组件，保持单 package 和嵌入式部署。
 
-Markdown 正文和 YAML Frontmatter 是事实源；LanceDB 与 SQLite 都是派生投影。Agent 原生工具负责已知路径读取、文档创建、编辑、移动与删除。AgentWiki 提供检索、规则、校验，以及显式请求的格式修复。
+Markdown 正文和 YAML Frontmatter 是事实源；LanceDB 是唯一派生投影。Agent 原生工具负责已知路径读取、文档创建、编辑、移动与删除。AgentWiki 提供检索、规则、校验，以及显式请求的格式修复。
 
 HTTP API、云同步、Web UI、查询 LLM、实体自动抽取和操作审计不在范围内。无需独立数据库或模型服务，允许依赖使用原生库。
 
@@ -14,7 +14,7 @@ HTTP API、云同步、Web UI、查询 LLM、实体自动抽取和操作审计�
 | --- | --- |
 | CLI / 配置 | `src/cli.rs` 已有命令路由和配置加载；模型配置可驱动可选语义索引 |
 | Markdown / 规则 / 校验 | 已接入 pulldown-cmark、text-splitter、globset、dprint；格式修复仍需显式 `--fix-format` |
-| 同步 / SQLite | SQLite 只保存路径、文件指纹、向量输入哈希和投影格式，用作独立提交账本 |
+| 同步 / LanceDB | 文件指纹、向量输入哈希和投影格式与检索行共同保存在 LanceDB |
 | 检索 / 图谱 | LanceDB 统一承接文档与片段、结构化过滤、精确匹配、关系、FTS 和可选向量查询 |
 | MCP | `src/mcp.rs` 已用 rmcp 3.3 提供三个 stdio 工具 |
 | 语义 / 格式修复 | FastEmbed 已接入同步与 LanceDB 向量投影；默认关闭模型，格式修复提供 CLI 显式入口 |
@@ -26,7 +26,7 @@ HTTP API、云同步、Web UI、查询 LLM、实体自动抽取和操作审计�
 | 职责 | 目标组件 | 自有代码边界 |
 | --- | --- | --- |
 | 全文 / 向量 / 混合 | LanceDB | 字段映射、查询约束、证据组织与降级 |
-| 投影账本 | rusqlite，bundled | 文件指纹、向量确认状态和投影格式；不参与用户查询 |
+| 投影账本 | LanceDB document 行 | 文件指纹、向量输入哈希和投影格式；与检索数据同一版本 |
 | 本地 embedding | FastEmbed | 输入构造、模型配置、缓存与错误处理 |
 | Markdown | pulldown-cmark | 标题、链接、源位置的领域映射 |
 | 章节切分 | text-splitter | 在标题章节内切分，保留章节路径 |
@@ -37,7 +37,7 @@ HTTP API、云同步、Web UI、查询 LLM、实体自动抽取和操作审计�
 | 异步 / 日志 / 错误 | tokio / tracing / thiserror + anyhow | 生命周期与系统边界上下文 |
 | 路径 / 指纹 / 锁 | camino / sha2 / fs2 | UTF-8 路径、变更确认、跨进程写协调 |
 
-LanceDB 承接 BM25、向量查询、过滤与 RRF；FTS 显式配置 jieba 中文分词（词典在 Lance 语言模型目录，由 `LANCE_LANGUAGE_MODEL_HOME` 或平台数据目录提供，安装说明见 README；缺失时给出明确指引），不自建中文分词适配器或通用融合算法。专业词和代码标识符效果通过固定语料验证，不能由组件支持推断召回质量。[FTS 配置](https://docs.rs/lancedb/latest/lancedb/index/scalar/struct.FtsIndexBuilder.html)、[RRF](https://docs.rs/lancedb/latest/lancedb/rerankers/rrf/struct.RRFReranker.html)
+LanceDB 承接 FTS、向量查询、过滤与原生 RRF；当前 FTS 使用 Lance 默认 tokenizer，不在应用层自建分词器或通用融合算法。中文专名、混合文本和代码标识符的效果必须用固定语料实测，不能由组件支持本身推断召回质量。[FTS 配置](https://docs.rs/lancedb/latest/lancedb/index/scalar/struct.FtsIndexBuilder.html)、[RRF](https://docs.rs/lancedb/latest/lancedb/rerankers/rrf/struct.RRFReranker.html)
 
 FastEmbed 首个支持 `BAAI/bge-small-zh-v1.5`，适配其模型枚举和资源，不自行实现模型分词、池化或推理。关闭模型时不初始化推理资源；启用后按需准备本地缓存，准备完成后离线运行。[FastEmbed](https://docs.rs/fastembed/latest/fastembed/)
 
@@ -72,7 +72,6 @@ src/
 │   ├── mod.rs             # 可重建投影资源束
 │   ├── types.rs           # 同步报告
 │   ├── sync.rs            # 增量同步、重建、重试
-│   ├── metadata.rs        # SQLite 投影提交账本
 │   ├── lance.rs           # LanceDB 唯一边界
 │   └── embedding.rs       # FastEmbed 唯一边界
 ├── retrieval/
@@ -97,18 +96,18 @@ tests/
 
 ```text
 CLI / MCP → AgentWiki
-              ├─ projection → document / LanceDB / FastEmbed / SQLite
+              ├─ projection → document / LanceDB / FastEmbed
 ├─ retrieval → projection，所有读取由 LanceDB 完成
               └─ governance → document / rules / format
 ```
 
 - AgentWiki 统一持有 Wiki 根目录和一个 Projection 资源束；Projection 只在 AgentWiki 装配时创建。
-- 用例接口为 async；LanceDB 使用原生异步 API，SQLite、FastEmbed、格式化和同步解析通过阻塞任务隔离。
-- LanceDB/Arrow、FastEmbed 和 SQLite 类型分别限制在 projection/lance、embedding、metadata。
+- 用例接口为 async；LanceDB 使用原生异步 API，FastEmbed、格式化和同步解析通过阻塞任务隔离。
+- LanceDB/Arrow 和 FastEmbed 类型分别限制在 projection/lance、embedding。
 - 类型按使用域组织，不建立中央 model 模块；领域类型不依赖协议 SDK。
 - lib 只导出实际调用者需要的公共 API，不全量公开内部模块或数据库行结构。
 - relation 复用解析出的链接和章节，validate 复用同一文档表示，不重复扫描或解析。
-- config 只在入口加载，业务模块接收已解析参数；同步文件 I/O、SQLite 和模型推理不阻塞 Tokio executor，阻塞任务需限制并发并等待完成。
+- config 只在入口加载，业务模块接收已解析参数；同步文件 I/O 和模型推理不阻塞 Tokio executor，阻塞任务需限制并发并等待完成。
 
 ## 4. 数据与运行行为
 
@@ -124,28 +123,69 @@ Wiki 根目录的 `AGENTWIKI.md` 是唯一组织规则入口：Frontmatter 是�
 ~/.agentwiki/
 ├── config.json
 ├── models/                       # 本地模型缓存
-└── indexes/<wiki-root-hash>/      # 规范化绝对 Wiki 根目录的 SHA-256
-    ├── lancedb/
-    ├── agentwiki.sqlite3
+└── lancedb/<wiki-root-hash>/      # 规范化绝对 Wiki 根目录的 SHA-256
     └── sync.lock
 ```
 
 先创建并规范化根目录，再确定隔离键。现有共享投影不直接复用，迁移后按根目录重新建立；旧投影清理由用户显式执行，不自动删除未知目录。Markdown 和规则内容无需迁移。
 
+### 4.1.1 LanceDB 存储结构
+
+当前投影只有一张业务表 `wiki_rows`。不再维护 retrieval、vector、relation 三张表，也不建立 SQLite 账本。表中的每一行由 `chunk_id` 唯一标识，`unit_kind` 区分三种行：
+
+| 行类型 | `unit_kind` | 作用 | 主要字段 |
+| --- | --- | --- | --- |
+| 文档 | `document` | 文档级发现、最近修改、Frontmatter 返回和同步指纹 | `path`、`type`、`title`、`summary`、`tags`、`facets`、`lookup_keys`、`frontmatter_json`、`content_hash`、`source_size`、`modified_at_ns` |
+| 切片 | `fragment` | 章节级证据召回 | `path`、`chunk_id`、`title`、`section`、`content`、`tags`、`facets`、`source_hash`、`ordinal` |
+| 关系 | `relation` | Markdown 显式的一跳关系 | `path`、`target_path`、`relation_type`、`source_section` |
+
+所有行共享以下投影字段：
+
+| 字段 | 类型/约束 | 设计意图 |
+| --- | --- | --- |
+| `path` | Utf8 | 文档和切片为来源文档；关系为来源文档，保证按文档整组替换 |
+| `chunk_id` | Utf8 | 文档、切片和关系的稳定 merge key；由路径、类型、序号或关系内容确定性生成 |
+| `type` | Utf8 | Frontmatter 的文档分类，如 `profile`、`events`、`skills`、`cases` |
+| `tags` | `List<Utf8>` | 归一化标签，支持全部满足的集合过滤 |
+| `facets` | `List<Utf8>` | 其他 Frontmatter 等值条件，编码为 `key=canonical-json`，避免为动态字段扩展 Schema |
+| `lookup_keys` | `List<Utf8>` | 规范化相对路径、文件名、标题和 aliases，支持精确匹配 |
+| `title` / `section` / `content` | Utf8 | 结果展示和全文检索输入 |
+| `frontmatter_json` | Utf8 | 仅 document 行保存完整 Frontmatter，供结果水合 |
+| `modified_at_ns` | Int64 | 真实文件 mtime，用于 recent 和显式时间过滤 |
+| `ordinal` | Int32 | 切片在来源文档中的顺序 |
+| `source_hash` | Utf8 | 切片输入内容哈希，用于变化检测和诊断 |
+| `content_hash` / `source_size` | Utf8 / Int64 | document 行的原文同步指纹 |
+| `vector_input_hash` | Utf8 | embedding 模型身份与实际输入的哈希；空值表示向量尚未成功生成 |
+| `vector` | nullable `FixedSizeList<Float32, 512>` | document/fragment 的可选语义向量；relation 行为空 |
+
+`search_text` 是当前 Lance FTS 的统一词法输入，由路径、标题、别名、摘要、标签、大纲以及切片章节正文构成；它不是 Markdown 的事实字段。关系行的文本字段为空，只参与结构化关系查询，不进入文档和切片检索。
+
+索引布局如下：
+
+| 字段 | LanceDB 索引 | 查询场景 |
+| --- | --- | --- |
+| `path`、`chunk_id`、`target_path`、`modified_at_ns`、`source_size` | BTree | 路径、关系目标、时间和同步指纹 |
+| `unit_kind`、`type`、`relation_type` | Bitmap | 文档/切片/关系及分类过滤 |
+| `tags`、`facets`、`lookup_keys` | LabelList | 集合过滤、Frontmatter 等值过滤、精确标题/路径/alias |
+| `search_text` | FTS | 关键词、显式 keywords 和 Hybrid 的词法腿 |
+| `vector` | Lance 向量查询 | 可选语义和 Hybrid 查询 |
+
+这种结构将“返回文档所需的数据”“检索所需的数据”和“增量同步所需的指纹”放在同一版本的同一张表中；Markdown 仍然是唯一事实源，表可随时删除并从 Markdown 重建。
+
 ### 4.2 增量同步与恢复
 
-1. 查询前收集相对路径、真实 mtime_ns 和大小，与账本筛选变化；失败文档也必须进入重试判断，不能被全局 generation 跳过。
+1. 查询前收集相对路径、真实 mtime_ns 和大小，与 LanceDB 中的 document 行指纹筛选变化；失败文档也必须进入重试判断，不能被全局 generation 跳过。
 2. 疑似变化文档读取一次并计算内容哈希；内容相同只更新文件指纹，不重复解析和生成向量。
 3. 变化内容解析一次，供片段、元数据、关系和校验复用。解析失败保留该文档已有有效投影，记录路径和错误；不得将读取失败当成文件删除。
 4. 唯一内容哈希配对的删除与新增识别为移动，保留文档身份；有歧义则按增删处理。
 5. 更新关键词、文档信息和关系；向量按模型身份和实际输入哈希复用或同步批量计算。模型身份包含适配后的版本和维度，变更时旧向量失效。
-6. 元数据账本只有在相应投影成功后才确认。语义失败不撤销关键词投影，保留独立失败依据，下次同步重试。
+6. 每个文档的 document、fragment、relation 行通过一次 `merge_insert` 提交；语义失败仍提交词法字段并将向量留空，下次同步重试。
 
-SQLite 不参与任何面向 Agent 的查询；LanceDB 统一保存 document/fragment、结构化过滤字段和显式关系。SQLite 只在 Lance 投影成功后确认文件指纹与向量输入哈希。两者没有跨库事务，写操作由 fs2 跨进程锁协调，部分完成操作必须幂等重试。
+LanceDB 统一保存 document/fragment、结构化过滤字段、显式关系和同步指纹；单文档通过 `merge_insert` 一次提交，查询统一针对当前 `wiki_rows` 表。写操作由 fs2 跨进程锁协调，部分完成操作必须幂等重试。
 
 不维护后台向量队列、watcher、pending 恢复或独立向量 manifest。首次和变更查询允许等待同步向量批处理；计算失败报告降级，进程退出后通过哈希与失败记录再次同步。
 
-外部修改走增量路径，rebuild 和索引恢复才全量重建。投影格式不兼容时关闭资源、在锁内重建，不进行文档数据迁移。LanceDB 索引整理随批量同步或显式维护调用完成；未并入索引的数据仍须可查，不能为速度隐式返回过期结果。[索引更新机制](https://docs.lancedb.com/search/full-text-search)
+外部修改走增量路径，rebuild 和索引恢复才全量重建。投影格式不兼容时关闭资源、在锁内重建，不进行文档数据迁移。索引由 LanceDB 管理；当前同步路径不隐式执行独立的 optimize 任务，后续只有在固定基准证明收益后才增加显式维护入口。未并入索引的数据仍须可查，不能为速度隐式返回过期结果。[索引更新机制](https://docs.lancedb.com/search/full-text-search)
 
 ### 4.3 检索与证据
 
@@ -153,9 +193,9 @@ SQLite 不参与任何面向 Agent 的查询；LanceDB 统一保存 document/fra
 
 每篇文档固定生成一个 document 检索单元；正文按 Markdown 标题生成零到多个 fragment 单元，超长章节再使用统一的 text-splitter 参数切分。类型不参与切片策略。document 的检索文本由路径、标题、别名、摘要、标签和标题大纲组成；fragment 额外包含章节与正文。两类单元分别召回、融合和限额，避免文档发现与局部证据竞争同一候选池。
 
-普通查询并行使用精确匹配、BM25 和可选语义检索，再按检索单元分别执行 RRF。显式 `keywords` 支持 any/all；内核不从自然语言查询推导关键词，不自动扩展标签、类型或关系，也不根据“最近”等措辞猜测排序意图。
+普通查询先把 `query` 或显式 `keywords` 编译为 Lance FTS 查询；有向量时在同一次 Lance 查询中组合 FTS 与向量，并交给内置 `RRFReranker` 排序。精确路径、标题和 alias 通过 `lookup_keys` 单独过滤并置顶，再与 Hybrid 结果去重。显式 `keywords` 支持 any/all；内核不从自然语言查询推导关键词，不自动扩展标签、类型或关系，也不根据“最近”等措辞猜测排序意图。
 
-scope、tags、note_types、metadata_filters 和修改时间在 LanceDB 的 BM25/向量候选生成前施加；空 query、精确 path/title/alias、最近修改、known_tags 和 Frontmatter 水合也查询 LanceDB。tags、aliases 和 canonical facets 使用 `List<Utf8>` 与 LabelList 索引，类型和单元类型使用 Bitmap，路径与时间使用 BTree。过滤值必须转义，不能拼接未经验证的检索表达式。
+scope、tags、note_types、metadata_filters 和修改时间在 LanceDB 的 FTS/向量候选生成前施加；空 query、精确 path/title/alias、最近修改、known_tags 和 Frontmatter 水合也查询 LanceDB。tags、facets 和 `lookup_keys` 使用 `List<Utf8>` 与 LabelList 索引，类型和单元类型使用 Bitmap，路径与时间使用 BTree。过滤值必须转义，不能拼接未经验证的检索表达式。
 
 document_limit 默认 5，fragment_limit 默认 10，范围均为 1..20。关系默认关闭；显式开启后只返回最多五条一跳边及声明上下文，不自动读取目标文档或扩展多跳。具体接口见 MCP 契约。
 
@@ -181,7 +221,7 @@ document_limit 默认 5，fragment_limit 默认 10，范围均为 1..20。关系
 | --- | --- |
 | cli.rs、mcp.rs | 两个异步二进制入口；参数、协议和输出接线 |
 | document/* | 文档类型、解析、安全路径、切分与关系提取 |
-| projection/* | 同步编排、LanceDB、FastEmbed 与 SQLite 边界 |
+| projection/* | 同步编排、LanceDB 与 FastEmbed 边界 |
 | retrieval/* | 查询契约、候选融合与证据组织 |
 | governance/* | 规则契约、globset、dprint、校验与格式修复 |
 | app.rs | AgentWiki 单次装配 Projection，并提供异步用例接口 |

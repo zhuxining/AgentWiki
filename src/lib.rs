@@ -2,15 +2,15 @@
 //!
 //! Reads a directory of Markdown files (the "wiki"), projects an incremental
 //! search index (keywords + optional vectors) into an embedded LanceDB engine
-//! plus a small metadata store (`rusqlite`) for the projection commit ledger,
+//! plus a rebuildable LanceDB projection,
 //! and exposes retrieval/governance through a CLI
 //! and an MCP server.
 //!
 //! Notable constraints:
 //! - Markdown files are the source of truth. All indexes are derived and must
 //!   be fully rebuildable from the wiki.
-//! - SQLite is control-plane state only. All user-facing reads, including
-//!   structured filters and the explicit relation graph, use LanceDB.
+//! - LanceDB is the sole derived projection, including sync fingerprints and
+//!   the explicit relation graph.
 //! - Domain types must stay dependency-free of third-party I/O crates.
 
 #![forbid(unsafe_code)]

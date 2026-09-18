@@ -1,6 +1,6 @@
 # AgentWiki
 
-面向多个 AI Agent 的本地优先 Markdown 知识检索层。Markdown 是事实源，检索索引和元数据存储都是可删除、可重建的派生数据。
+面向多个 AI Agent 的本地优先 Markdown 知识检索层。Markdown 是事实源，LanceDB 是唯一可删除、可重建的派生投影。
 
 > **迁移状态**：Rust 主链路已切换到 LanceDB，MCP 已接入 rmcp 3.3。默认配置使用关键词检索；配置 embedding model 后启用 FastEmbed 向量投影。具体边界见 [架构与迁移说明](docs/ARCHITECTURE.md)。
 
@@ -21,8 +21,9 @@ Agent 原生文件工具负责已知路径读取和文档增删改；AgentWiki �
 Markdown 文档库 + AGENTWIKI.md 规则
                 ↓ 增量同步、解析、章节切分
        ┌────────┴──────────┐
-       │ LanceDB                         │ SQLite
-       │ 全文 / 向量 / 过滤 / 关系 / RRF │ 投影提交账本
+       │ LanceDB Catalog                 │
+       │ 文档 / 切片 / 关系 / 指纹        │
+       │ 全文 / 向量 / 过滤 / RRF         │
        └────────┬──────────┘
                 ↑ FastEmbed 本地向量生成
                 ↓
@@ -68,20 +69,9 @@ cargo run --bin agentwiki-mcp --features mcp
 - `embedding_model`：`null` 或缺省关闭语义检索。支持值为 `BAAI/bge-small-zh-v1.5`，由 FastEmbed 适配并在同步时写入 LanceDB 向量投影；模型准备完成后支持离线使用。
 - 派生数据位于 `~/.agentwiki/`，按规范化 Wiki 根目录隔离投影，模型缓存单独存放，无需新增配置项。
 
-### 中文分词词典（首次运行前置）
+### 关键词检索
 
-关键词检索使用 LanceDB FTS 的 jieba 中文分词器，词典不随 CRATE 分发，首次运行前准备一次（缺失时命令会给出同样指引）：
-
-```bash
-# macOS：~/Library/Application Support/lance/language_models/jieba/default/dict.txt
-mkdir -p "$HOME/Library/Application Support/lance/language_models/jieba/default"
-curl -L -o "$HOME/Library/Application Support/lance/language_models/jieba/default/dict.txt" \
-  https://cdn.jsdelivr.net/gh/fxsjy/jieba@master/jieba/dict.txt
-
-# Linux：~/.local/share/lance/language_models/jieba/default/dict.txt
-```
-
-也可设置 `LANCE_LANGUAGE_MODEL_HOME=$PWD/lm`（该目录下需含 `jieba/default/dict.txt`）。分词器变更会触发投影自动全量重建。
+关键词检索使用 LanceDB FTS；当前采用 Lance 默认 tokenizer，不需要额外下载分词词典。中文专名、混合文本和代码标识符的召回效果取决于实际语料，应通过固定语料基准验证，不将 tokenizer 的存在等同于质量保证。
 
 Wiki 根目录的 `AGENTWIKI.md` 是唯一规则与 Agent 指导入口，不进入普通文档索引。AgentWiki 门面在文件缺失时写入默认模板，已存在时不覆盖；CLI 与 MCP 共用同一异步用例层。必填字段由规则声明，系统不内置必填字段。
 

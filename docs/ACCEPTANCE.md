@@ -42,7 +42,7 @@ K 架构与工程契约 → L 检索质量（非阻塞）
 | B1 | 首次运行自举 | 无 `~/.agentwiki/` 时创建默认 `config.json`（`wiki_root=~/AgentWiki`、`embedding_model=null`） | 黑盒 | ✅ R1 |
 | B2 | wiki_root 解析优先级 | CLI `--wiki-root` > 配置；`~` 展开为 home；相对路径以配置目录为基准；绝对路径直通 | 黑盒 | ✅ R1 |
 | B3 | 模型配置校验 | 仅支持 `BAAI/bge-small-zh-v1.5`；其它值报配置错误；`null`/缺省关闭语义腿 | 黑盒 | ✅ R1 |
-| B4 | 投影根隔离 | 投影目录 = `~/.agentwiki/indexes/<规范化根目录 SHA-256>`；同一根（含 `.`）同一投影，不同根不同投影 | 黑盒 | ✅ R1 |
+| B4 | 投影根隔离 | 投影目录 = `~/.agentwiki/lancedb/<规范化根目录 SHA-256>`；同一根（含 `.`）同一投影，不同根不同投影 | 黑盒 | ✅ R1 |
 | B5 | AGENTWIKI.md 自举 | 根目录缺失时写入默认模板；已存在永不覆盖 | 黑盒 | ✅ R1 |
 | B6 | 配置宽容 vs 规则严格 | 用户 config 未知字段忽略；规则文件未知字段拒绝（`rules.parse`） | 白盒 | ✅ R1 |
 
@@ -59,27 +59,27 @@ K 架构与工程契约 → L 检索质量（非阻塞）
 
 | ID | 验收项 | 验收标准 | 方法 | 状态 |
 | --- | --- | --- | --- | --- |
-| D1 | 首次全量索引 | 空投影下全部文档建立关键词投影 + 账本；报告 indexed 计数正确 | 黑盒 | ✅ R2 |
+| D1 | 首次全量索引 | 空投影下全部文档建立 `wiki_rows` 关键词投影；报告 indexed 计数正确 | 黑盒 | ✅ |
 | D2 | 未变化免解析 | mtime_ns+size 相同且无失败记录 → 直接跳过；仅 mtime 抖动（内容不变）→ 只更新指纹 | 黑盒 | ✅ R2 |
-| D3 | 变化重投 | 内容变化 → 重读解析一次，替换切片、重新提取关系、账本确认在投影成功之后 | 黑盒 | ✅ R2 |
+| D3 | 变化重投 | 内容变化 → 重读解析一次，替换 document/fragment/relation 行，确认在投影成功之后 | 黑盒 | ✅ |
 | D4 | 单篇失败隔离 | 解析失败保留旧证据、进入 degraded、下次重试；不误报删除；其它文档不受影响 | 黑盒 | ✅ R2 |
-| D5 | 删除同步 | 账本有而磁盘无 → 索引与账本删除，removed 计数正确 | 黑盒 | ✅ R2 |
+| D5 | 删除同步 | LanceDB 有而磁盘无 → 删除该文档的全部行，removed 计数正确 | 黑盒 | ✅ |
 | D6 | 移动识别 | 内容哈希唯一配对的删除+新增识别为移动；路径保持唯一身份；moved 计数正确 | 白盒 | ✅ |
 | D7 | 向量批处理 | 按输入哈希 + 模型身份复用；模型身份含版本与维度，变更使旧向量失效；失败保留关键词能力待重试 | 白盒 | ✅ R5（端到端：模型同步 degraded=0、向量复用二次同步 unchanged=3） |
-| D8 | 跨进程锁 | fs2 排他锁覆盖同步/重建；部分完成可幂等重试，账本不提前确认 | 黑盒 | ✅ R2 |
-| D9 | 重建与恢复 | rebuild 全量重建；SQLite 版本不兼容触发重建，不迁移文档数据 | 黑盒 | ✅ R2 |
+| D8 | 跨进程锁 | fs2 排他锁覆盖同步/重建；部分完成可幂等重试，Markdown 仍是事实源 | 黑盒 | ✅ R2 |
+| D9 | 重建与恢复 | rebuild 全量重建；Lance schema/format 不兼容触发重建，不迁移文档数据 | 黑盒 | ✅ R2 |
 | D10 | 失败不可跳过 | 失败文档不因全局 generation 被跳过，下次同步必重试 | 白盒 | ✅ R2 |
 
 ## E. 检索
 
 | ID | 验收项 | 验收标准 | 方法 | 状态 |
 | --- | --- | --- | --- | --- |
-| E1 | 关键词检索 | 中文专名、中英混合、代码标识符（切片级 BM25/FTS）可命中 | 黑盒 | ✅ R6（GAP-3 修复后：中文专名/连续词/混合/标识符全部命中） |
+| E1 | 关键词检索 | 中文专名、中英混合、代码标识符（切片级 Lance FTS）可命中；效果以固定语料基准为准 | 黑盒 | ✅ |
 | E2 | 近期检索 | 空 query 按真实文件 mtime 返回最近文档（非索引时间） | 黑盒 | ✅ R2 |
 | E3 | scope 过滤 | 目录覆盖自身及子树；文档精确匹配；越界/非法返回错误不伪装空结果 | 黑盒 | ✅ R2 |
 | E4 | Lance 元数据预过滤 | tags LabelList 全部满足、note_types Bitmap 任一匹配、canonical facets 等值全满足，修改时间范围生效；空查询和 top-k 召回共用同一过滤器 | 黑盒 | ✅ 集成测试覆盖深位候选不会因过滤后截断而丢失 |
 | E5 | 语义检索与降级 | 启用模型后追加语义候选；模型不可用 → degraded + 关键词兜底，不伪装无匹配 | 黑盒 | ✅ R5（断网降级 ✓；语义端到端 ✓；无答案语义见 GAP-12） |
-| E6 | 混合与策略 | document 与 fragment 分别对精确、词法、语义候选执行 RRF；返回 strategy 与真实 match_sources（exact/keyword/semantic/recency） | 白盒 | ✅ 两类检索单元独立融合 |
+| E6 | 混合与策略 | document 与 fragment 分别查询；词法+语义由同一 Lance Hybrid 查询使用内置 RRF，精确命中单独置顶并去重；返回 strategy 与真实 match_sources | 白盒 | ✅ |
 | E7 | 结果预算 | document_limit 默认 5、fragment_limit 默认 10，范围均为 1..20；文档发现与片段证据不竞争同一候选池 | 黑盒 | ✅ |
 | E8 | 无答案语义 | 正常无匹配不是故障（degraded 为空）；全部检索来源失败必须明确报告 | 黑盒 | ✅ R2 |
 | E9 | 精确匹配优先 | 精确项优先于模糊项；rank_score 仅本次排序可比较 | 白盒 | ✅ R12（exact 腿排名第一并标记来源） |
@@ -139,7 +139,7 @@ K 架构与工程契约 → L 检索质量（非阻塞）
 
 | ID | 验收项 | 验收标准 | 方法 | 状态 |
 | --- | --- | --- | --- | --- |
-| K1 | 模块边界 | LanceDB/Arrow 类型仅在 retrieval/index；FastEmbed 仅在 retrieval/embedding；SQLite 连接仅在 storage；model 无第三方 I/O 依赖 | 白盒 | ✅ R4 |
+| K1 | 模块边界 | LanceDB/Arrow 类型仅在 projection/lance；FastEmbed 仅在 projection/embedding；model 无第三方 I/O 依赖 | 白盒 | ✅ R4 |
 | K2 | 错误链 | thiserror 保留 source；入口收敛 anyhow；不把底层错误压成字符串 | 白盒 | ✅ R4 |
 | K3 | 文档一致性 | README/ARCHITECTURE/MCP_TOOLS/RULES 与实现同步（含"待实现/不可用"标注）；git diff --check 干净 | 白盒 | ✅ R8（GAP-10/README 与 GAP-3 分词断言、GAP-7 错误码标注同步） |
 | K4 | 写权限边界 | 应用写 Markdown 仅限 AGENTWIKI.md 自举与显式格式修复；一旦索引失败不覆盖原文 | 白盒 | ✅ R4 |
@@ -200,13 +200,13 @@ K 架构与工程契约 → L 检索质量（非阻塞）
 | --- | --- | --- | --- | --- |
 | GAP-1 | ~~死依赖 ×4~~ **✅ R8 已修复**：从 Cargo.toml 移除 `tracing`、`tracing-subscriber`、`time`(formatting)、`walkdir` 直接依赖；锁文件由 Cargo 重新解析（`time` 完全退出依赖树，`tracing`/`walkdir` 仅作为 lancedb 链传递依赖保留） | Cargo.toml 已删；Cargo.lock 重解析 | 已修复 | — |
 | GAP-2 | ~~移动识别未实现~~ **✅ R9 已修复**：唯一内容哈希配对删除+新增识别为移动，路径是身份且不维护跨路径 ID；黑盒+单测覆盖 rename 后 moved=1、新路径可检索和二次同步幂等 | src/projection/sync.rs（配对逻辑） | 已修复 | — |
-| GAP-3 | ~~中文 FTS 检索完全失效~~ **✅ R6 已修复**：FTS 显式配置 jieba 分词（`FtsIndexBuilder::new("jieba/default", ...)`），旧投影经 `retrieval_format` 版本标记自动删库全量重建；词典经 `LANCE_LANGUAGE_MODEL_HOME`/平台数据目录提供，缺失时明确报错。黑盒复验：认证方案/令牌/轮换/借用检查器/OAuth2 全命中，无答案 0 命中，增量同步正常 | src/projection/lance.rs（FTS 构建与 ensure_language_model）；src/projection/metadata.rs:RETRIEVAL_FORMAT；src/projection/sync.rs assemble/sync_locked | 已修复；中文检索恢复 | 后续在固定语料重跑 L1 基线 |
-| GAP-4 | ~~混合检索未实现~~ **✅ R12 已修复**：keyword/semantic/exact 三腿按标准 RRF（k=60，Cormack et al.）融合，双腿同命中排序更高（黑盒：1/61×2 > 1/62）；引擎 `rerank_hybrid` 因 keyword/vector 分属两表（`_rowid` 不可比）不可用，已注释说明组件边界；strategy=mixed 由 MCP 层按 sources 推导 | src/retrieval/search.rs（RRF 融合） | 已修复 | 若未来向量并入 chunks 单表，可换回 `lancedb::rerankers::RRFReranker` |
-| GAP-5 | ~~精确匹配（exact）来源未实现~~ **✅ R12 已修复**：文件名 stem 或相对路径==查询（大小写不敏感、截断 64 字符）的文档进入 exact 腿并 rank 第一；MCP 探针验证 match_sources=['exact']、rank_score=1/61；评分前不再忽略文件名精确匹配文档 | src/retrieval/search.rs（exact_matches）；src/projection/metadata.rs all_paths | 已修复 | — |
-| GAP-6 | ~~related 结构缺契约字段~~ **✅ R11 已修复**：RelatedDocument 扩展（filename/direction/resolution_status/source_section/context）；出边+入边合并取前 5（edges_to_path 新查询、filename 派生）；context 从声明章节切片恢复。MCP 探针验证：入/出边、章节、原文上下文齐全 | src/retrieval/types.rs 与各领域 types.rs、src/projection/metadata.rs、src/retrieval/search.rs | 已修复 | — |
+| GAP-3 | ~~中文 FTS 检索完全失效~~ **✅ 已迁移**：统一 `wiki_rows` 使用 Lance FTS；中文分词效果需在固定语料重新基准验证 | src/projection/lance.rs；src/projection/sync.rs | 已迁移 | 固定语料基准 |
+| GAP-4 | ~~混合检索未实现~~ **✅ 已迁移**：词法与语义在同一 `wiki_rows` 表中执行 Lance 原生 Hybrid + `RRFReranker`；精确 `lookup_keys` 命中单独置顶并去重 | src/retrieval/search.rs；src/projection/lance.rs | 已修复 | — |
+| GAP-5 | ~~精确匹配（exact）来源未实现~~ **✅ 已迁移**：使用 `lookup_keys` LabelList 索引 | src/retrieval/search.rs；src/projection/lance.rs | 已修复 | — |
+| GAP-6 | ~~related 结构缺契约字段~~ **✅ 已迁移**：关系行与检索行统一存放于 `wiki_rows` | src/retrieval/types.rs、src/projection/lance.rs、src/retrieval/search.rs | 已修复 | — |
 | GAP-7 | ~~格式错误码与契约不一致~~ **✅ R8 已修复**：校验报告 `markdown.formatting`（warning，dprint 内存比对，frontmatter 后空行归入前置保留、CLEAN 文档不误报）；写回冲突映射 `format.conflict`（新增 FormatConflict 错误变体）、其余失败映射 `format.failed`；RULES.md 移除"待实现"标注 | src/governance/validate.rs、src/governance/format.rs、src/app.rs、src/error.rs | 已修复 | — |
 | GAP-8 | ~~get_wiki_context 返回结构不符契约~~ **✅ R11 已修复**：检索用例直接组装完整契约数据（query/scope/strategy/degraded/results[]/truncated；结果含 path/filename/summary/section/snippet/rank_score/match_sources/modified_at(RFC3339)/frontmatter/related），MCP 只负责序列化 | src/mcp.rs、src/app.rs、src/retrieval/types.rs | 已修复 | GAP-4 落地后 strategy=hybrid 由真实混合驱动 |
-| GAP-9 | ~~get_wiki_rules 缺结构字段~~ **✅ R11 已修复**：scope 参数 + 结构化 default_type/required_fields/tag_aliases/sections（effective_rules 按 scope 合并）+ 动态 known_tags（账本聚合、按使用频次排序）；调用前 ensure_fresh 保证投影新鲜度；规则损坏明确报错 | src/mcp.rs、src/app.rs、src/projection/metadata.rs | 已修复 | — |
+| GAP-9 | ~~get_wiki_rules 缺结构字段~~ **✅ 已迁移**：动态 known_tags 从 Lance document 行聚合 | src/mcp.rs、src/app.rs、src/projection/lance.rs | 已修复 | — |
 | GAP-10 | ~~README 过时~~ **✅ R8 已修复**："迁移后新增，当前不可用"的 --fix-format 已并入当前入口列表；投影隔离描述更新 | README.md | 已修复 | — |
 | GAP-11 | ~~CLI 过滤参数缺失~~ **✅ R10 已修复**：`query --tag/--note-type/--metadata KEY=VALUE`（可重复）接入 ContextQuery；黑盒验证 all-tags/any-type/等值过滤与错误格式提示 | src/cli.rs | 已修复 | — |
 | GAP-12 | ~~语义无答案失效~~ **✅ R7 已修复**：vector_search 读取 LanceDB `_distance` 列，score 改为真实相似度 1/(1+L2)；`SEMANTIC_MIN_SIMILARITY=0.46` 按 bge-small-zh-v1.5 初标定（无答案 top1 ≤0.4505，最弱相关改写 0.4760），低于阈值过滤 | src/projection/lance.rs:vector_search；src/retrieval/types.rs 与各领域 types.rs:SEMANTIC_MIN_SIMILARITY | 已修复 | 固定语料基准上重新标定阈值 |

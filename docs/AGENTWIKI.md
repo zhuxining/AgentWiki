@@ -76,4 +76,4 @@ tag_aliases:
 - `projects/`：项目相关知识
 - `notes/`：一般知识和记录
 
-目标检索索引（LanceDB）与元数据存储（SQLite）都是可重建的派生数据，Markdown 文件才是知识事实源。
+目标 LanceDB Catalog 是可重建的派生数据，Markdown 文件才是知识事实源。
