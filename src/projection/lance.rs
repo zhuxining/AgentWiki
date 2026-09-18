@@ -25,6 +25,7 @@ use lancedb::query::{ColumnOrdering, ExecutableQuery, QueryBase, Select};
 use lancedb::rerankers::rrf::RRFReranker;
 use lancedb::{Connection, Table, connect};
 use sha2::{Digest, Sha256};
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 const TABLE: &str = "wiki_rows";
@@ -97,6 +98,46 @@ impl LanceIndex {
         Ok(out)
     }
 
+    /// Return document paths whose semantic vector is still unavailable.
+    pub async fn documents_missing_vectors(&self) -> Result<BTreeSet<String>> {
+        let mut stream = self
+            .table
+            .query()
+            .only_if("unit_kind = 'document' AND vector IS NULL")
+            .select(Select::Columns(vec!["path".into()]))
+            .execute()
+            .await
+            .map_err(index_err)?;
+        let mut out = BTreeSet::new();
+        while let Some(batch) = stream.try_next().await.map_err(index_err)? {
+            let paths = string_col(&batch, "path")?;
+            for i in 0..batch.num_rows() {
+                out.insert(paths.value(i).to_owned());
+            }
+        }
+        Ok(out)
+    }
+
+    /// Update only the source fingerprint when the content is unchanged.
+    pub async fn update_document_fingerprint(
+        &self,
+        path: &PathScope,
+        fingerprint: &Fingerprint,
+    ) -> Result<()> {
+        self.table
+            .update()
+            .only_if(format!(
+                "unit_kind = 'document' AND path = '{}'",
+                sql_string(path.0.as_str())
+            ))
+            .column("modified_at_ns", fingerprint.mtime_ns.to_string())
+            .column("source_size", (fingerprint.size as i64).to_string())
+            .execute()
+            .await
+            .map(|_| ())
+            .map_err(index_err)
+    }
+
     /// Replace every derived row owned by one Markdown file in one Lance commit.
     pub async fn replace_document(
         &self,
@@ -105,6 +146,7 @@ impl LanceIndex {
         edges: &[Edge],
         vectors: Option<&[Vec<f32>]>,
         fingerprint: &Fingerprint,
+        embedding_identity: Option<&str>,
     ) -> Result<()> {
         if vectors.is_some_and(|vectors| {
             vectors.len() != slices.len()
@@ -116,7 +158,14 @@ impl LanceIndex {
                 "vector dimensions do not match index schema".into(),
             ));
         }
-        let batch = unified_batch(path, slices, edges, vectors, fingerprint)?;
+        let batch = unified_batch(
+            path,
+            slices,
+            edges,
+            vectors,
+            fingerprint,
+            embedding_identity,
+        )?;
         let reader: Box<dyn arrow_array::RecordBatchReader + Send> =
             Box::new(RecordBatchIterator::new(
                 vec![Ok(batch)].into_iter(),
@@ -472,15 +521,12 @@ fn result_columns(_distance: bool) -> Vec<String> {
         "type",
         "tags",
         "facets",
-        "title",
-        "aliases",
         "frontmatter_json",
         "modified_at_ns",
         "ordinal",
         "section",
         "content",
         "search_text",
-        "source_hash",
     ]
     .into_iter()
     .map(String::from)
@@ -515,23 +561,22 @@ fn slice_from_batch(batch: &RecordBatch, row: usize) -> Result<Slice> {
         "document" => RetrievalUnitKind::Document,
         _ => RetrievalUnitKind::Fragment,
     };
+    let path = PathScope(s("path")?.into());
+    let frontmatter: Frontmatter = serde_json::from_str(&s("frontmatter_json")?)
+        .map_err(|e| AgentWikiError::Index(e.to_string()))?;
     Ok(Slice {
-        path: PathScope(s("path")?.into()),
+        path,
         chunk_id: s("chunk_id")?,
         unit_kind: t,
         note_type: s("type")?,
         tags: list_values(batch, "tags", row)?,
         facets: list_values(batch, "facets", row)?,
-        title: s("title")?,
-        aliases: list_values(batch, "aliases", row)?,
-        frontmatter: serde_json::from_str(&s("frontmatter_json")?)
-            .map_err(|e| AgentWikiError::Index(e.to_string()))?,
+        frontmatter,
         modified_at_ns: int64_col(batch, "modified_at_ns")?.value(row),
         ordinal: i("ordinal")?,
         section: s("section")?,
         content: s("content")?,
         search_text: s("search_text")?,
-        source_hash: s("source_hash")?,
     })
 }
 
@@ -572,15 +617,12 @@ fn unified_schema(dims: Option<usize>) -> Arc<Schema> {
         Field::new("type", DataType::Utf8, false),
         list_field("tags"),
         list_field("facets"),
-        Field::new("title", DataType::Utf8, false),
-        list_field("aliases"),
         Field::new("frontmatter_json", DataType::Utf8, false),
         Field::new("modified_at_ns", DataType::Int64, false),
         Field::new("ordinal", DataType::Int32, false),
         Field::new("section", DataType::Utf8, false),
         Field::new("content", DataType::Utf8, false),
         Field::new("search_text", DataType::Utf8, false),
-        Field::new("source_hash", DataType::Utf8, false),
         list_field("lookup_keys"),
         Field::new("target_path", DataType::Utf8, false),
         Field::new("relation_type", DataType::Utf8, false),
@@ -612,6 +654,7 @@ fn unified_batch(
     edges: &[Edge],
     vectors: Option<&[Vec<f32>]>,
     fp: &Fingerprint,
+    embedding_identity: Option<&str>,
 ) -> Result<RecordBatch> {
     let schema = unified_schema(
         vectors
@@ -624,15 +667,12 @@ fn unified_batch(
     let mut types = StringBuilder::new();
     let mut tags = ListBuilder::new(StringBuilder::new());
     let mut facets = ListBuilder::new(StringBuilder::new());
-    let mut titles = StringBuilder::new();
-    let mut aliases = ListBuilder::new(StringBuilder::new());
     let mut fm = StringBuilder::new();
     let mut modified = arrow_array::builder::Int64Builder::new();
     let mut ordinal = arrow_array::builder::Int32Builder::new();
     let mut sections = StringBuilder::new();
     let mut content = StringBuilder::new();
     let mut search = StringBuilder::new();
-    let mut source_hash = StringBuilder::new();
     let mut lookup = ListBuilder::new(StringBuilder::new());
     let mut target = StringBuilder::new();
     let mut rel_type = StringBuilder::new();
@@ -663,8 +703,6 @@ fn unified_batch(
         types.append_value(&slice.note_type);
         add_list(&mut tags, &slice.tags);
         add_list(&mut facets, &slice.facets);
-        titles.append_value(&slice.title);
-        add_list(&mut aliases, &slice.aliases);
         fm.append_value(
             serde_json::to_string(&slice.frontmatter)
                 .map_err(|e| AgentWikiError::Index(e.to_string()))?,
@@ -674,7 +712,6 @@ fn unified_batch(
         sections.append_value(&slice.section);
         content.append_value(&slice.content);
         search.append_value(&slice.search_text);
-        source_hash.append_value(&slice.source_hash);
         let keys = lookup_keys(slice);
         add_list(&mut lookup, &keys);
         target.append_value("");
@@ -690,7 +727,7 @@ fn unified_batch(
         } else {
             ""
         });
-        vector_hash.append_value("");
+        vector_hash.append_value(embedding_input_hash(embedding_identity, &slice.search_text));
         add_vec(vectors.and_then(|vs| vs.get(n)));
     }
     for edge in edges {
@@ -702,15 +739,12 @@ fn unified_batch(
         types.append_value("");
         add_list(&mut tags, &[]);
         add_list(&mut facets, &[]);
-        titles.append_value("");
-        add_list(&mut aliases, &[]);
         fm.append_value("{}");
         modified.append_value(fp.mtime_ns);
         ordinal.append_value(0);
         sections.append_value("");
         content.append_value("");
         search.append_value("");
-        source_hash.append_value("");
         add_list(&mut lookup, &[]);
         target.append_value(edge.to.0.as_str());
         rel_type.append_value(&edge.relation_type);
@@ -729,15 +763,12 @@ fn unified_batch(
             Arc::new(types.finish()),
             Arc::new(tags.finish()),
             Arc::new(facets.finish()),
-            Arc::new(titles.finish()),
-            Arc::new(aliases.finish()),
             Arc::new(fm.finish()),
             Arc::new(modified.finish()),
             Arc::new(ordinal.finish()),
             Arc::new(sections.finish()),
             Arc::new(content.finish()),
             Arc::new(search.finish()),
-            Arc::new(source_hash.finish()),
             Arc::new(lookup.finish()),
             Arc::new(target.finish()),
             Arc::new(rel_type.finish()),
@@ -751,6 +782,12 @@ fn unified_batch(
     .map_err(|e| AgentWikiError::Index(e.to_string()))
 }
 
+fn embedding_input_hash(identity: Option<&str>, input: &str) -> String {
+    identity
+        .map(|identity| hex::encode(Sha256::digest(format!("{identity}\0{input}").as_bytes())))
+        .unwrap_or_default()
+}
+
 fn lookup_keys(slice: &Slice) -> Vec<String> {
     let path = slice.path.0.as_str().to_lowercase();
     let filename = slice
@@ -759,14 +796,22 @@ fn lookup_keys(slice: &Slice) -> Vec<String> {
         .file_stem()
         .unwrap_or(path.as_str())
         .to_lowercase();
-    let mut out = vec![path, filename, slice.title.trim().to_lowercase()];
-    out.extend(
-        slice
-            .aliases
-            .iter()
-            .map(|x| x.trim().to_lowercase())
-            .filter(|x| !x.is_empty()),
-    );
+    let mut out = vec![path, filename];
+    if let Some(title) = slice.frontmatter.get("title").and_then(|v| v.as_str()) {
+        let title = title.trim().to_lowercase();
+        if !title.is_empty() {
+            out.push(title);
+        }
+    }
+    if let Some(aliases) = slice.frontmatter.get("aliases").and_then(|v| v.as_array()) {
+        out.extend(
+            aliases
+                .iter()
+                .filter_map(|value| value.as_str())
+                .map(|value| value.trim().to_lowercase())
+                .filter(|value| !value.is_empty()),
+        );
+    }
     out
 }
 

@@ -135,8 +135,8 @@ Wiki 根目录的 `AGENTWIKI.md` 是唯一组织规则入口：Frontmatter 是�
 
 | 行类型 | `unit_kind` | 作用 | 主要字段 |
 | --- | --- | --- | --- |
-| 文档 | `document` | 文档级发现、最近修改、Frontmatter 返回和同步指纹 | `path`、`type`、`title`、`summary`、`tags`、`facets`、`lookup_keys`、`frontmatter_json`、`content_hash`、`source_size`、`modified_at_ns` |
-| 切片 | `fragment` | 章节级证据召回 | `path`、`chunk_id`、`title`、`section`、`content`、`tags`、`facets`、`source_hash`、`ordinal` |
+| 文档 | `document` | 文档级发现、最近修改、Frontmatter 返回和同步指纹 | `path`、`type`、`tags`、`facets`、`lookup_keys`、`frontmatter_json`、`content_hash`、`source_size`、`modified_at_ns` |
+| 切片 | `fragment` | 章节级证据召回 | `path`、`chunk_id`、`section`、`content`、`tags`、`facets`、`ordinal` |
 | 关系 | `relation` | Markdown 显式的一跳关系 | `path`、`target_path`、`relation_type`、`source_section` |
 
 所有行共享以下投影字段：
@@ -148,17 +148,16 @@ Wiki 根目录的 `AGENTWIKI.md` 是唯一组织规则入口：Frontmatter 是�
 | `type` | Utf8 | Frontmatter 的文档分类，如 `profile`、`events`、`skills`、`cases` |
 | `tags` | `List<Utf8>` | 归一化标签，支持全部满足的集合过滤 |
 | `facets` | `List<Utf8>` | 其他 Frontmatter 等值条件，编码为 `key=canonical-json`，避免为动态字段扩展 Schema |
-| `lookup_keys` | `List<Utf8>` | 规范化相对路径、文件名、标题和 aliases，支持精确匹配 |
-| `title` / `section` / `content` | Utf8 | 结果展示和全文检索输入 |
-| `frontmatter_json` | Utf8 | 仅 document 行保存完整 Frontmatter，供结果水合 |
+| `lookup_keys` | `List<Utf8>` | 规范化相对路径、文件名和 aliases，支持精确匹配 |
+| `section` / `content` | Utf8 | 结果展示和全文检索输入；文档标题由 Frontmatter `title`（若有）或文件名推导，不单独存列 |
+| `frontmatter_json` | Utf8 | 仅 document 行保存完整 Frontmatter，供结果水合；aliases 等原始字段不拆列 |
 | `modified_at_ns` | Int64 | 真实文件 mtime，用于 recent 和显式时间过滤 |
 | `ordinal` | Int32 | 切片在来源文档中的顺序 |
-| `source_hash` | Utf8 | 切片输入内容哈希，用于变化检测和诊断 |
 | `content_hash` / `source_size` | Utf8 / Int64 | document 行的原文同步指纹 |
 | `vector_input_hash` | Utf8 | embedding 模型身份与实际输入的哈希；空值表示向量尚未成功生成 |
 | `vector` | nullable `FixedSizeList<Float32, 512>` | document/fragment 的可选语义向量；relation 行为空 |
 
-`search_text` 是当前 Lance FTS 的统一词法输入，由路径、标题、别名、摘要、标签、大纲以及切片章节正文构成；它不是 Markdown 的事实字段。关系行的文本字段为空，只参与结构化关系查询，不进入文档和切片检索。
+`search_text` 是当前 Lance FTS 的统一词法输入，由路径、文件名、可选 title、aliases、摘要、标签、大纲以及切片章节正文构成；它不是 Markdown 的事实字段。关系行的文本字段为空，只参与结构化关系查询，不进入文档和切片检索。title、aliases 保留在 document 行的 `frontmatter_json` 中，归一化后同时写入 `search_text` 和 `lookup_keys`，不再建立独立列。
 
 索引布局如下：
 
@@ -166,7 +165,7 @@ Wiki 根目录的 `AGENTWIKI.md` 是唯一组织规则入口：Frontmatter 是�
 | --- | --- | --- |
 | `path`、`chunk_id`、`target_path`、`modified_at_ns`、`source_size` | BTree | 路径、关系目标、时间和同步指纹 |
 | `unit_kind`、`type`、`relation_type` | Bitmap | 文档/切片/关系及分类过滤 |
-| `tags`、`facets`、`lookup_keys` | LabelList | 集合过滤、Frontmatter 等值过滤、精确标题/路径/alias |
+| `tags`、`facets`、`lookup_keys` | LabelList | 集合过滤、Frontmatter 等值过滤、精确文件名/路径/alias |
 | `search_text` | FTS | 关键词、显式 keywords 和 Hybrid 的词法腿 |
 | `vector` | Lance 向量查询 | 可选语义和 Hybrid 查询 |
 
@@ -174,12 +173,12 @@ Wiki 根目录的 `AGENTWIKI.md` 是唯一组织规则入口：Frontmatter 是�
 
 ### 4.2 增量同步与恢复
 
-1. 查询前收集相对路径、真实 mtime_ns 和大小，与 LanceDB 中的 document 行指纹筛选变化；失败文档也必须进入重试判断，不能被全局 generation 跳过。
-2. 疑似变化文档读取一次并计算内容哈希；内容相同只更新文件指纹，不重复解析和生成向量。
+1. 查询前收集相对路径、真实 mtime_ns 和大小，与 LanceDB 中的 document 行指纹及向量完整性筛选变化；文件未变化但向量缺失的文档进入向量补偿重试。
+2. 疑似变化文档读取一次并计算内容哈希；内容相同只更新 document 行的文件指纹，不重复解析和生成向量（向量缺失时除外）。
 3. 变化内容解析一次，供片段、元数据、关系和校验复用。解析失败保留该文档已有有效投影，记录路径和错误；不得将读取失败当成文件删除。
 4. 唯一内容哈希配对的删除与新增识别为移动，保留文档身份；有歧义则按增删处理。
 5. 更新关键词、文档信息和关系；向量按模型身份和实际输入哈希复用或同步批量计算。模型身份包含适配后的版本和维度，变更时旧向量失效。
-6. 每个文档的 document、fragment、relation 行通过一次 `merge_insert` 提交；语义失败仍提交词法字段并将向量留空，下次同步重试。
+6. 每个文档的 document、fragment、relation 行通过一次 `merge_insert` 提交；语义失败仍提交词法字段、记录 `vector_input_hash` 并将向量留空，下次同步重新构造该文档投影并重试向量。
 
 LanceDB 统一保存 document/fragment、结构化过滤字段、显式关系和同步指纹；单文档通过 `merge_insert` 一次提交，查询统一针对当前 `wiki_rows` 表。写操作由 fs2 跨进程锁协调，部分完成操作必须幂等重试。
 
@@ -195,7 +194,7 @@ LanceDB 统一保存 document/fragment、结构化过滤字段、显式关系和
 
 普通查询先把 `query` 或显式 `keywords` 编译为 Lance FTS 查询；有向量时在同一次 Lance 查询中组合 FTS 与向量，并交给内置 `RRFReranker` 排序。精确路径、标题和 alias 通过 `lookup_keys` 单独过滤并置顶，再与 Hybrid 结果去重。显式 `keywords` 支持 any/all；内核不从自然语言查询推导关键词，不自动扩展标签、类型或关系，也不根据“最近”等措辞猜测排序意图。
 
-scope、tags、note_types、metadata_filters 和修改时间在 LanceDB 的 FTS/向量候选生成前施加；空 query、精确 path/title/alias、最近修改、known_tags 和 Frontmatter 水合也查询 LanceDB。tags、facets 和 `lookup_keys` 使用 `List<Utf8>` 与 LabelList 索引，类型和单元类型使用 Bitmap，路径与时间使用 BTree。过滤值必须转义，不能拼接未经验证的检索表达式。
+scope、tags、note_types、metadata_filters 和修改时间在 LanceDB 的 FTS/向量候选生成前施加；空 query、精确 path/filename/alias、最近修改、known_tags 和 Frontmatter 水合也查询 LanceDB。tags、facets 和 `lookup_keys` 使用 `List<Utf8>` 与 LabelList 索引，类型和单元类型使用 Bitmap，路径与时间使用 BTree。过滤值必须转义，不能拼接未经验证的检索表达式。
 
 document_limit 默认 5，fragment_limit 默认 10，范围均为 1..20。关系默认关闭；显式开启后只返回最多五条一跳边及声明上下文，不自动读取目标文档或扩展多跳。具体接口见 MCP 契约。
 

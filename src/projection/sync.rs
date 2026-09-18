@@ -14,6 +14,8 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
 
+const EMBEDDING_IDENTITY: &str = "BAAI/bge-small-zh-v1.5";
+
 pub struct Projection {
     pub root: camino::Utf8PathBuf,
     pub index: LanceIndex,
@@ -80,6 +82,11 @@ impl Projection {
             .map_err(|e| AgentWikiError::Other(format!("scan task failed: {e}")))??;
         let current: BTreeSet<String> = paths.iter().map(|p| p.0.to_string()).collect();
         let previous = self.index.document_fingerprints().await?;
+        let missing_vectors = if self.embedder.is_some() {
+            self.index.documents_missing_vectors().await?
+        } else {
+            Default::default()
+        };
         let mut removed_by_hash: HashMap<String, Vec<String>> = HashMap::new();
         for (path, fp) in &previous {
             if !current.contains(path) {
@@ -119,7 +126,10 @@ impl Projection {
                         .as_nanos() as i64,
                 };
                 let prev = previous.get(path.0.as_str());
-                if prev.is_some_and(|p| p.mtime_ns == stamp.mtime_ns && p.size == stamp.size) {
+                let vector_retry = missing_vectors.contains(path.0.as_str());
+                if prev.is_some_and(|p| p.mtime_ns == stamp.mtime_ns && p.size == stamp.size)
+                    && !vector_retry
+                {
                     return Ok(false);
                 }
                 let read_root = self.root.clone();
@@ -130,7 +140,14 @@ impl Projection {
                 .await
                 .map_err(|e| AgentWikiError::Other(format!("document task failed: {e}")))??;
                 if prev.is_some_and(|p| p.content_hash == doc.fingerprint.content_hash) {
-                    return Ok(false);
+                    if vector_retry {
+                        // Keep the existing lexical projection and retry only embedding below.
+                    } else {
+                        self.index
+                            .update_document_fingerprint(path, &doc.fingerprint)
+                            .await?;
+                        return Ok(false);
+                    }
                 }
                 let slices = document::chunk_document(
                     &doc.frontmatter,
@@ -162,6 +179,7 @@ impl Projection {
                             Some(v)
                         }
                         Err(e) => {
+                            report.vectors_pending += slices.len();
                             report
                                 .degraded
                                 .push(format!("{}: embedding unavailable: {e}", path.0));
@@ -172,7 +190,14 @@ impl Projection {
                     None
                 };
                 self.index
-                    .replace_document(path, &slices, &edges, vectors.as_deref(), &doc.fingerprint)
+                    .replace_document(
+                        path,
+                        &slices,
+                        &edges,
+                        vectors.as_deref(),
+                        &doc.fingerprint,
+                        self.embedder.as_ref().map(|_| EMBEDDING_IDENTITY),
+                    )
                     .await?;
                 if prev.is_none()
                     && removed_by_hash

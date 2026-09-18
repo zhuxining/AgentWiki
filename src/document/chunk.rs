@@ -18,7 +18,6 @@ pub fn chunk_document(
         .get("summary")
         .and_then(serde_json::Value::as_str)
         .unwrap_or("");
-    let explicit_title = frontmatter.get("title").and_then(serde_json::Value::as_str);
     let mut sections: Vec<(String, String)> = Vec::new();
     let mut headings: Vec<(usize, String)> = Vec::new();
     let mut heading = None;
@@ -58,8 +57,10 @@ pub fn chunk_document(
     if !content.is_empty() {
         sections.push((breadcrumb(&headings), content.to_owned()));
     }
-    let title = explicit_title
-        .or_else(|| headings.first().map(|(_, title)| title.as_str()))
+    let title = frontmatter
+        .get("title")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.trim().is_empty())
         .unwrap_or(filename);
     let tag_values = frontmatter
         .get("tags")
@@ -77,6 +78,12 @@ pub fn chunk_document(
         .to_owned();
     let facets = frontmatter
         .iter()
+        .filter(|(key, _)| {
+            !matches!(
+                key.as_str(),
+                "type" | "tags" | "summary" | "title" | "aliases"
+            )
+        })
         .map(|(key, value)| {
             format!(
                 "{key}={}",
@@ -98,7 +105,6 @@ pub fn chunk_document(
         .map(|(_, heading)| heading.as_str())
         .collect::<Vec<_>>()
         .join(" / ");
-    let document_source = format!("{title}\n{summary}\n{outline}").trim().to_owned();
     let document_search = format!(
         "{}\n{title}\n{aliases}\n{summary}\n{tags}\n{outline}",
         path.0
@@ -112,15 +118,12 @@ pub fn chunk_document(
         note_type: note_type.clone(),
         tags: tag_values.clone(),
         facets: facets.clone(),
-        title: title.to_owned(),
-        aliases: alias_values.clone(),
         frontmatter: frontmatter.clone(),
         modified_at_ns,
         ordinal: 0,
         section: String::new(),
         content: summary.to_owned(),
         search_text: document_search,
-        source_hash: hex::encode(Sha256::digest(document_source.as_bytes())),
     }];
     let mut ordinal = 1u32;
     if sections.is_empty()
@@ -143,15 +146,12 @@ pub fn chunk_document(
                 note_type: note_type.clone(),
                 tags: tag_values.clone(),
                 facets: facets.clone(),
-                title: title.to_owned(),
-                aliases: Vec::new(),
                 frontmatter: Frontmatter::new(),
                 modified_at_ns,
                 ordinal,
                 section: section.clone(),
                 content: fragment,
                 search_text,
-                source_hash: hex::encode(Sha256::digest(source.as_bytes())),
             });
             ordinal += 1;
         }

@@ -28,15 +28,12 @@ pub struct Slice {
     pub note_type: String,
     pub tags: Vec<String>,
     pub facets: Vec<String>,
-    pub title: String,
-    pub aliases: Vec<String>,
     pub frontmatter: Frontmatter,
     pub modified_at_ns: i64,
     pub ordinal: u32,
     pub section: String,
     pub content: String,
     pub search_text: String,
-    pub source_hash: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
