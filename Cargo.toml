@@ -38,12 +38,12 @@ serde_yaml = "0.9"
 thiserror = "2"
 anyhow = "1"
 camino = { version = "1", features = ["serde1"] }
-dirs = "6"
+dirs = "7"
 
 # ---------------------------------------------------------------------------
 # Data & IO
 # ---------------------------------------------------------------------------
-sha2 = "0.10"
+sha2 = "0.11"
 hex = "0.4"
 pulldown-cmark = "0.13"
 fs2 = "0.4"
@@ -52,31 +52,28 @@ tempfile = "3"
 # ---------------------------------------------------------------------------
 # Retrieval (embedded LanceDB + local embeddings)
 # ---------------------------------------------------------------------------
-lancedb = { version = "0.38", features = ["remote"] }
-lance-index = "11"
+lancedb = { version = "0.39", features = ["remote"] }
+lance-index = "12"
 arrow-array = "58"
 arrow-schema = "58"
 futures = "0.3"
-fastembed = "6"
-text-splitter = { version = "0.27", features = ["markdown"] }
+fastembed = "7"
+text-splitter = { version = "0.32", features = ["markdown"] }
 globset = "0.4"
-dprint-plugin-markdown = "0.22"
+dprint-plugin-markdown = "0.24"
 
 # ---------------------------------------------------------------------------
 # CLI / MCP entry points
 # ---------------------------------------------------------------------------
 clap = { version = "4", features = ["derive", "env"] }
-
-# MCP server SDK — kept behind the `mcp` feature so the core library stays
-# SDK-free and the ecosystem churn does not block the rest of the workspace.
-rmcp = { version = "3.3", optional = true, features = [
+rmcp = { version = "3.4", optional = true, features = [
     "server",
     "transport-io",
 ] }
 schemars = { version = "1", optional = true }
 
 [features]
-default = []
+default = ["mcp"]
 mcp = ["dep:rmcp", "dep:schemars"]
 
 [dev-dependencies]
