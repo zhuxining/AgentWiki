@@ -1,7 +1,7 @@
 //! LanceDB projection boundary.
 //!
 //! Markdown rows, relations and synchronization fingerprints intentionally
-//! live in one Lance table.  SQLite is not part of the projection anymore.
+//! live in one Lance table.
 
 use crate::document::types::{
     Edge, EdgeStatus, Fingerprint, Frontmatter, PathScope, RetrievalUnitKind, Slice,

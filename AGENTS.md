@@ -14,7 +14,7 @@
 ## 工具链与依赖
 
 - 保持单 package、共享库和 CLI/MCP 两个二进制；使用 edition 2024；工具链和 feature 以 Cargo.toml 为准。
-- 目标检索使用 LanceDB，推理使用 FastEmbed，元数据使用 rusqlite bundled。SQLite 不执行全文或向量查询。
+- 目标检索使用 LanceDB，推理使用 FastEmbed。
 - 文档解析使用 pulldown-cmark、serde_yaml，长章节切分使用 text-splitter，目录遍历使用标准库，模式匹配使用 globset，格式化使用 dprint-plugin-markdown。
 - CLI 使用 clap，MCP 使用官方 SDK 并由 mcp feature 隔离；核心库不依赖 MCP SDK。移除无消费者的旧 SDK、watcher、配置校验与测试依赖，不建立替代框架。
 - 复用 tokio、serde、camino、thiserror 和 anyhow；少量配置条件直接校验。检查现有依赖是否已提供能力，再决定新增依赖。
@@ -32,27 +32,27 @@ src/mcp.rs         MCP 协议与组合入口
 src/config.rs      配置加载与投影路径
 src/app.rs         AgentWiki 异步用例门面和资源所有权
 src/document/      安全路径、读取、解析、切分与关系提取
-src/projection/    同步编排、LanceDB、FastEmbed 和 SQLite
+src/projection/    同步编排、LanceDB 和 FastEmbed
 src/retrieval/     查询契约、融合策略与证据组织
 src/governance/    规则、校验与格式修复
 ```
 
 - 目录随功能迁移创建，不声明空模块，不新增 workspace、通用 Repository 或无消费者的 trait。
-- AgentWiki 是唯一异步用例门面，统一持有 Projection 资源束；同步、检索和治理不重复装配索引或 SQLite。
-- LanceDB/Arrow 类型仅在 projection/lance，FastEmbed 类型仅在 projection/embedding，SQLite 连接仅在 projection/metadata；禁止越过适配边界操作底层资源。
-- 契约类型按 document、retrieval、governance、projection 归属，不建立中央 model 模块；数据库行结构留在 projection/metadata 内部。
+- AgentWiki 是唯一异步用例门面，统一持有 Projection 资源束；同步、检索和治理不重复装配索引。
+- LanceDB/Arrow 类型仅在 projection/lance，FastEmbed 类型仅在 projection/embedding；禁止越过适配边界操作底层资源。
+- 契约类型按 document、retrieval、governance、projection 归属，不建立中央 model 模块；数据库行结构留在 projection/lance 内部。
 - lib 仅导出调用者需要的公共 API；入口只负责配置、参数、协议和序列化，不复制业务实现。
 - document 统一生成解析结果，relation 和 validate 复用；不得分别实现标题、链接扫描或重复读取变化文档。
 
 ## 数据与行为约束
 
-- Markdown 是唯一文档事实源，LanceDB 和 SQLite 可删除、可重建；索引失败不得覆盖或回滚原文。
+- Markdown 是唯一文档事实源，LanceDB 投影可删除、可重建；索引失败不得覆盖或回滚原文。
 - 配置只由入口读取 ~/.agentwiki/config.json；业务接收已解析参数，不读取业务环境变量配置。缺失时创建默认配置，保留 CLI 根目录覆盖优先级。
 - 目标投影按规范化 Wiki 根目录隔离，模型缓存独立。旧投影重新建立，不自动删除未知数据目录。
 - 查询前按路径、真实 mtime_ns 和大小筛选变化，再用内容哈希确认；变化文件只读取解析一次，失败记录不能被全局 generation 跳过。
 - 单文档读取、解析或索引失败必须记录相对路径和原因并继续处理其他文档；不得静默丢弃或把读取失败当作删除。
 - 向量同步批处理，按输入哈希与模型身份复用；失败保留关键词能力并允许下次重试。不维护后台队列、watcher 或独立向量 manifest。
-- 跨进程写使用 fs2 文件锁；LanceDB 与 SQLite 没有跨库事务，部分完成必须可重试，账本不得提前确认成功。
+- 跨进程写使用 fs2 文件锁；投影写入部分完成时必须可重试，不得提前确认成功。
 - 只有显式 rebuild、版本不兼容或损坏恢复才全量重建。最近活动使用真实文件修改时间，不使用索引时间。
 - 正常无匹配和主动关闭语义不记为系统故障；故障进入 degraded，命中来源必须有实际证据。
 - 路径、scope 和链接目标必须留在 Wiki 根目录；拒绝外部符号链接。限制输入大小、数量和并发，禁止拼接未经验证的检索表达式。
@@ -75,7 +75,7 @@ src/governance/    规则、校验与格式修复
 - 只读参数优先 &str、切片、camino::Utf8Path；所有权、跨线程传递与存储需要时再按值接收。
 - 库错误使用 thiserror 保留 source，入口收敛为 anyhow；使用 ? 传播错误，不将底层错误压成字符串丢失错误链，不静默忽略错误。
 - unwrap/expect 限于测试或已证明的不变量。公开 API 按需写简洁 rustdoc，说明错误和有意的 panic。
-- 目标入口运行于 Tokio；文件 I/O、SQLite 和模型推理等阻塞工作使用有界 spawn_blocking，不阻塞 executor，不跨 await 持同步锁 guard。
+- 目标入口运行于 Tokio；文件 I/O 和模型推理等阻塞工作使用有界 spawn_blocking，不阻塞 executor，不跨 await 持同步锁 guard。
 - 缩小锁范围，不在锁内执行无关工作；投影一致性需要的协调锁说明保护范围。任务必须有所有者负责等待、取消和错误处理。
 - 先测量再优化；不手写已有组件提供的查询、分词、切分、模式匹配、格式化或通用融合算法。
 - 注释保留不变量和非显然取舍，不逐行解释代码；避免敏感值进入 Debug、错误与日志。

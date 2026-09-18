@@ -8,7 +8,7 @@
 *.iml
 
 # ---------------------------------------------------------------------------
-# Runtime data (never committed): local wiki index, SQLite, lock files
+# Runtime data (never committed): local wiki index and lock files
 # ---------------------------------------------------------------------------
 .agentwiki/**
 

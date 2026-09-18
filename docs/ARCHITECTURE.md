@@ -131,7 +131,7 @@ Wiki 根目录的 `AGENTWIKI.md` 是唯一组织规则入口：Frontmatter 是�
 
 ### 4.1.1 LanceDB 存储结构
 
-当前投影只有一张业务表 `wiki_rows`。不再维护 retrieval、vector、relation 三张表，也不建立 SQLite 账本。表中的每一行由 `chunk_id` 唯一标识，`unit_kind` 区分三种行：
+当前投影只有一张业务表 `wiki_rows`，不再维护 retrieval、vector、relation 三张表。表中的每一行由 `chunk_id` 唯一标识，`unit_kind` 区分三种行：
 
 | 行类型 | `unit_kind` | 作用 | 主要字段 |
 | --- | --- | --- | --- |
