@@ -1,8 +1,7 @@
 //! FastEmbed adapter boundary.
 //!
-//! Model construction and embedding input formatting live here; retrieval and
-//! synchronization must not import FastEmbed types directly. The concrete
-//! model lifecycle is completed together with the LanceDB table migration.
+//! Model construction lives here; retrieval and synchronization must not
+//! import FastEmbed types directly.
 
 use fastembed::{Embedding, EmbeddingModel, TextEmbedding, TextInitOptions};
 
@@ -21,9 +20,4 @@ impl Embedder {
     pub fn embed(&mut self, inputs: Vec<String>) -> Result<Vec<Embedding>, String> {
         self.0.embed(inputs, None).map_err(|e| e.to_string())
     }
-}
-
-/// Stable input representation used for chunk embeddings.
-pub fn input_text(search_text: &str, tags: &[String]) -> String {
-    format!("{search_text}\n{}", tags.join(","))
 }

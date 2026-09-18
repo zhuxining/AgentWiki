@@ -34,17 +34,36 @@ struct ContextArgs {
     scope: String,
     #[serde(default = "default_limit")]
     limit: usize,
+    #[serde(default = "default_document_limit")]
+    document_limit: usize,
+    #[serde(default)]
+    keywords: Vec<String>,
+    #[serde(default)]
+    keyword_mode: agentwiki::KeywordMode,
     #[serde(default)]
     tags: Vec<String>,
     #[serde(default)]
     note_types: Vec<String>,
     #[serde(default)]
     metadata_filters: serde_json::Map<String, serde_json::Value>,
+    #[serde(default)]
+    modified_after_ns: Option<i64>,
+    #[serde(default)]
+    modified_before_ns: Option<i64>,
+    #[serde(default)]
+    order: agentwiki::SearchOrder,
+    #[serde(default)]
+    include_relations: bool,
 }
 
 #[cfg(feature = "mcp")]
 fn default_limit() -> usize {
     10
+}
+
+#[cfg(feature = "mcp")]
+fn default_document_limit() -> usize {
+    5
 }
 
 #[cfg(feature = "mcp")]
@@ -79,10 +98,17 @@ impl McpServer {
         let mut query = agentwiki::ContextQuery::default();
         query.query = args.query.clone();
         query.scope = args.scope.clone();
-        query.limit = args.limit;
+        query.document_limit = args.document_limit;
+        query.fragment_limit = args.limit;
+        query.keywords = args.keywords.clone();
+        query.keyword_mode = args.keyword_mode;
         query.tags = args.tags.clone();
         query.note_types = args.note_types.clone();
         query.metadata_filters = args.metadata_filters.clone();
+        query.modified_after_ns = args.modified_after_ns;
+        query.modified_before_ns = args.modified_before_ns;
+        query.order = args.order;
+        query.include_relations = args.include_relations;
         let result = self
             .wiki
             .query(query.clone())
@@ -90,43 +116,51 @@ impl McpServer {
             .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))?;
         // Assemble the contractual response shape (MCP_TOOLS.md),
         // enriching each ranked slice with filename / summary / mtime / frontmatter.
-        let mut results = Vec::new();
-        for (index, hit) in result.slices.iter().enumerate() {
-            // One-hop relations attach to the primary hit only.
-            let related = if index == 0 {
-                result
-                    .related
-                    .iter()
-                    .map(serde_json::to_value)
-                    .collect::<std::result::Result<Vec<_>, _>>()
-                    .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))?
-            } else {
-                Vec::new()
-            };
-            results.push(serde_json::json!({
-                "path": hit.slice.path.0,
-                "filename": hit.filename,
-                "summary": hit
-                    .frontmatter
-                    .get("summary")
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Null),
-                "section": hit.slice.section,
-                "snippet": hit.slice.content,
-                "rank_score": hit.score,
-                "match_sources": hit.sources,
-                "modified_at": rfc3339_from_nanos(hit.modified_at_ns),
-                "frontmatter": hit.frontmatter,
-                "related": related,
-            }));
-        }
-        let truncated = results.len() >= query.limit;
+        let documents = result
+            .documents
+            .iter()
+            .map(|hit| {
+                serde_json::json!({
+                    "path": hit.slice.path.0,
+                    "type": hit.slice.note_type,
+                    "filename": hit.filename,
+                    "summary": hit.slice.content,
+                    "tags": hit.slice.tags,
+                    "rank_score": hit.score,
+                    "match_sources": hit.sources,
+                    "modified_at": rfc3339_from_nanos(hit.modified_at_ns),
+                    "frontmatter": hit.frontmatter,
+                })
+            })
+            .collect::<Vec<_>>();
+        let fragments = result
+            .fragments
+            .iter()
+            .map(|hit| {
+                serde_json::json!({
+                    "path": hit.slice.path.0,
+                    "type": hit.slice.note_type,
+                    "filename": hit.filename,
+                    "section": hit.slice.section,
+                    "snippet": hit.slice.content,
+                    "tags": hit.slice.tags,
+                    "rank_score": hit.score,
+                    "match_sources": hit.sources,
+                    "modified_at": rfc3339_from_nanos(hit.modified_at_ns),
+                    "frontmatter": hit.frontmatter,
+                })
+            })
+            .collect::<Vec<_>>();
+        let truncated =
+            documents.len() >= query.document_limit || fragments.len() >= query.fragment_limit;
         serde_json::to_string(&serde_json::json!({
             "query": args.query,
             "scope": args.scope,
             "strategy": result.strategy,
             "degraded": result.degraded,
-            "results": results,
+            "documents": documents,
+            "fragments": fragments,
+            "relations": result.related,
             "truncated": truncated,
         }))
         .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))

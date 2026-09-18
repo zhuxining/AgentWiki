@@ -7,7 +7,7 @@ use crate::{
     document::relation,
     projection::{
         LanceIndex,
-        embedding::{Embedder, input_text},
+        embedding::Embedder,
         metadata::{LedgerRow, Metadata},
     },
 };
@@ -101,10 +101,8 @@ impl Projection {
         let current: std::collections::BTreeSet<_> =
             paths.iter().map(|p| p.0.to_string()).collect();
         let previous = self.meta.with(|store| store.ledger_snapshot()).await?;
-        // Removed paths grouped by their last known content hash, plus the
-        // identities already inherited this round, for unique move-pairing:
-        // content reappearing at exactly one new path keeps its identity,
-        // ambiguous duplicates are treated as add+delete.
+        // Removed paths grouped by their last known content hash. A unique
+        // deleted/new hash pair is reported as a move; paths remain identity.
         let mut removed_by_hash: std::collections::HashMap<String, Vec<String>> =
             std::collections::HashMap::new();
         for (path, fp) in &previous {
@@ -115,8 +113,6 @@ impl Projection {
                     .push(path.clone());
             }
         }
-        let mut inherited_identities: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
         let mut report = SyncReport::default();
         if let Some(error) = &self.embedding_error {
             report
@@ -147,13 +143,12 @@ impl Projection {
                 };
                 let prev = previous.get(path.0.as_str());
                 let path_text = path.0.to_string();
-                let (sync_error, embedding_hash, identity) = self
+                let embedding_hash = self
                     .meta
-                    .with(move |store| store.sync_state(&path_text))
+                    .with(move |store| store.vector_hash(&path_text))
                     .await?;
                 let vectors_current = self.embedder.is_none() || embedding_hash.is_some();
-                if sync_error.is_none()
-                    && vectors_current
+                if vectors_current
                     && prev.is_some_and(|p| p.mtime_ns == stamp.mtime_ns && p.size == stamp.size)
                 {
                     return Ok(false);
@@ -167,8 +162,7 @@ impl Projection {
                 .map_err(|error| {
                     AgentWikiError::Other(format!("document task failed: {error}"))
                 })??;
-                if sync_error.is_none()
-                    && vectors_current
+                if vectors_current
                     && prev.is_some_and(|p| p.content_hash == doc.fingerprint.content_hash)
                 {
                     let path_text = path.0.to_string();
@@ -178,84 +172,42 @@ impl Projection {
                         .await?;
                     return Ok(false);
                 }
-                let summary = doc
-                    .frontmatter
-                    .get("summary")
-                    .and_then(|value| value.as_str())
-                    .unwrap_or("");
-                let slices = document::chunk_document(summary, &body, path);
+                let slices = document::chunk_document(
+                    &doc.frontmatter,
+                    &body,
+                    path,
+                    doc.fingerprint.mtime_ns,
+                );
                 let (edges, warnings) = relation::extract_edges(path, &doc.frontmatter, &body);
                 report
                     .degraded
                     .extend(warnings.into_iter().map(|w| format!("{}: {w}", path.0)));
                 self.index.replace_slices(path, &slices).await?;
-                let relation_path = path.clone();
-                let relation_edges = edges.clone();
-                self.meta
-                    .with(move |store| store.replace_document(&relation_path, &relation_edges))
-                    .await?;
-                let fresh_identity = || {
-                    hex::encode(Sha256::digest(format!(
-                        "{}:{}",
-                        path.0, doc.fingerprint.content_hash
-                    )))
-                };
-                let stable_identity = if identity.is_empty() {
-                    if prev.is_none()
-                        && let Some(candidates) = removed_by_hash.get(&doc.fingerprint.content_hash)
-                        && candidates.len() == 1
-                        && let Ok((_, _, old_identity)) = self
-                            .meta
-                            .with({
-                                let candidate = candidates[0].clone();
-                                move |store| store.sync_state(&candidate)
-                            })
-                            .await
-                        && !old_identity.is_empty()
-                        && inherited_identities.insert(old_identity.clone())
-                    {
-                        report.moved += 1;
-                        old_identity
-                    } else {
-                        fresh_identity()
-                    }
-                } else {
-                    identity
-                };
+                self.index.replace_relations(path, &edges).await?;
+                if prev.is_none()
+                    && removed_by_hash
+                        .get(&doc.fingerprint.content_hash)
+                        .is_some_and(|candidates| candidates.len() == 1)
+                {
+                    report.moved += 1;
+                }
                 let row = LedgerRow {
                     path: path.0.to_string(),
                     content_hash: doc.fingerprint.content_hash.clone(),
                     mtime_ns: doc.fingerprint.mtime_ns,
                     size: doc.fingerprint.size,
-                    stable_identity,
-                    sync_error: self
-                        .embedder
-                        .as_ref()
-                        .map(|_| "vector projection incomplete".into()),
-                    embedding_hash: None,
-                    frontmatter_json: serde_json::to_string(&doc.frontmatter)
-                        .map_err(|e| AgentWikiError::Other(e.to_string()))?,
+                    vector_input_hash: None,
                 };
                 self.meta
                     .with(move |store| store.upsert_ledger(&row))
                     .await?;
                 if let Some(embedder) = &self.embedder {
-                    let tags = doc
-                        .frontmatter
-                        .get("tags")
-                        .and_then(|v| v.as_array())
-                        .map(|v| {
-                            v.iter()
-                                .filter_map(|t| t.as_str().map(str::to_owned))
-                                .collect::<Vec<_>>()
-                        })
-                        .unwrap_or_default();
                     let inputs: Vec<String> = slices
                         .iter()
-                        .map(|s| input_text(&s.search_text, &tags))
+                        .map(|slice| slice.search_text.clone())
                         .collect();
                     let input_hash = hex::encode(Sha256::digest(format!(
-                        "BAAI/bge-small-zh-v1.5:512:v1:{inputs:?}"
+                        "BAAI/bge-small-zh-v1.5:512:search-text-v2:{inputs:?}"
                     )));
                     if embedding_hash.as_deref() == Some(&input_hash) {
                         let path_text = path.0.to_string();
@@ -299,9 +251,9 @@ impl Projection {
             let scope = PathScope(path.into());
             let deletion = match self.index.delete_path(&scope).await {
                 Ok(()) => {
-                    let scope = scope.clone();
+                    let path = scope.0.to_string();
                     self.meta
-                        .with(move |store| store.delete_ledger(&scope))
+                        .with(move |store| store.delete_ledger(&path))
                         .await
                 }
                 Err(error) => Err(error),
@@ -313,15 +265,10 @@ impl Projection {
                     .push(format!("{path}: deletion failed: {error}")),
             }
         }
-        self.meta.with(|store| store.resolve_edges()).await?;
         report.generation = hex::encode(Sha256::digest(format!(
             "{:?}",
             self.meta.with(|store| store.ledger_snapshot()).await?
         )));
-        let generation = report.generation.clone();
-        self.meta
-            .with(move |store| store.set_generation(&generation))
-            .await?;
         // Confirm the retrieval format only after the projection round
         // succeeded, keeping a failed round force a full rebuild next time.
         self.meta

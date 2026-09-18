@@ -124,14 +124,7 @@ fn validate_one(
     }
 
     // 4) Structural: non-empty content must produce at least one slice.
-    let slices = crate::document::chunk_document(
-        frontmatter
-            .get("summary")
-            .and_then(|v| v.as_str())
-            .unwrap_or(""),
-        &body,
-        path,
-    );
+    let slices = crate::document::chunk_document(&frontmatter, &body, path, 0);
     if body.trim_end().is_empty() && slices.iter().all(|s| s.content.is_empty()) {
         issues.push(Issue {
             path: path.0.to_string(),

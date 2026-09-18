@@ -13,16 +13,25 @@ MCP 保留三个工具：任务检索、规则获取和规范校验。已知路�
 ```text
 query: str = ""
 scope: str = ""
-limit: int = 10              # 1..20
+limit: int = 10              # 片段结果数，1..20
+document_limit: int = 5      # 文档结果数，1..20
+keywords: list[str] | null
+keyword_mode: "any" | "all" = "any"
 tags: list[str] | null
 note_types: list[str] | null
 metadata_filters: object | null
+modified_after_ns: int | null
+modified_before_ns: int | null
+order: "relevance" | "modified_desc" = "relevance"
+include_relations: bool = false
 ```
 
-- 空 query 返回最近修改文档；普通 query 使用精确匹配、LanceDB BM25 和可选语义混合检索；明确近期主题查询加入新近度。
+- 空 query 且空 keywords 返回结构化过滤后的最近修改文档；非空 query 同时用于 jieba BM25 和可选语义检索。
+- keywords 是 Agent 显式提供的词法查询；any 取任一命中，all 要求同一检索单元命中全部关键词。AgentWiki 不从 query 自动推导 keywords。
 - scope 是 Wiki 相对目录或文档，空值表示全库；越界和非法参数返回错误。
-- tags 按规范化标签全部满足过滤，note_types 匹配任一指定类型；空列表不限制。metadata_filters 为字段等值条件，多个字段全部满足，不接受查询代码。
-- 不暴露 keyword/semantic/hybrid 模式选择或分页；同一文档最多两个片段，limit 限制返回片段总数。
+- tags 全部满足，note_types 匹配任一类型，metadata_filters 按 Frontmatter 字段等值匹配；这些条件在 BM25/向量召回前下推到 LanceDB，不执行 top-k 后过滤。
+- modified_after_ns/modified_before_ns 过滤真实文件 mtime；order 由 Agent 显式指定，内核不从查询文本猜测时间意图。
+- 每篇文档生成一个 document 单元，正文统一按 Markdown 标题切分，超长章节再用 text-splitter 切分。文档和片段分别排名。
 
 目标返回示例：
 
@@ -32,41 +41,31 @@ metadata_filters: object | null
   "scope": "",
   "strategy": "hybrid",
   "degraded": [],
-  "results": [
+  "documents": [
     {
       "path": "decisions/auth.md",
+      "type": "decision",
       "filename": "auth",
       "summary": "认证服务使用 OAuth2 管理访问令牌。",
-      "section": "刷新令牌",
-      "snippet": "与查询相关的证据片段",
       "rank_score": 0.0325,
       "match_sources": ["keyword", "semantic"],
       "modified_at": "2026-09-10T08:00:00Z",
-      "frontmatter": {},
-      "related": [
-        {
-          "path": "architecture/retrieval.md",
-          "filename": "retrieval",
-          "relation_type": "depends_on",
-          "direction": "outgoing",
-          "resolution_status": "resolved",
-          "source_section": "架构",
-          "context": "该文档依赖检索架构。"
-        }
-      ]
+      "frontmatter": {}
     }
   ],
+  "fragments": [{"path":"decisions/auth.md","section":"刷新令牌","snippet":"相关证据","rank_score":0.03,"match_sources":["keyword"]}],
+  "relations": [],
   "truncated": false
 }
 ```
 
-strategy 为 recent、keyword、hybrid 或 recent_hybrid，表示实际采用的策略。rank_score 仅解释本次排序，不是相似度或置信度，不跨查询比较，也不承诺固定公式近似值。match_sources 使用实际参与的 exact、keyword、semantic、recency 来源；不得从开启的配置推断命中来源。truncated 表示因输出或候选预算而未返回全部可用证据。
+strategy 为 recent、keyword 或 hybrid，表示实际采用的策略。rank_score 仅解释本次排序，不是相似度或置信度，不跨查询比较，也不承诺固定公式近似值。match_sources 使用实际参与的 exact、keyword、semantic、recency 来源；不得从开启的配置推断命中来源。truncated 表示 documents 或 fragments 达到请求限额。
 
-related 最多五条一跳入边或出边，包含来源章节与原文上下文；目标不存在仍保留 unresolved 和目标路径，未知标题为空字符串。不要自动扩展到多跳或抽取实体。
+include_relations=true 时 relations 最多返回五条一跳入边或出边；仅返回边和声明上下文，不自动读取目标文档或扩展多跳。
 
 查询前执行增量同步。首次或变化后的查询允许等待同步向量批处理，不存在后台任务完成通知。向量按实际输入哈希与模型身份复用，模型变化使旧向量失效并重新计算；失败记录留待后续同步重试。
 
-启用模型但不可用、文档同步失败和非法 relations 等进入 degraded。主动关闭模型、正常无匹配不记作故障；无匹配正常返回空 results。语义故障保留关键词能力，全部检索来源失败必须明确报告，不能伪装成正常无匹配。保留旧投影的失败文档需标明路径和过期原因。
+启用模型但不可用、文档同步失败和非法 relations 等进入 degraded。主动关闭模型、正常无匹配不记作故障；无匹配正常返回空 documents、fragments 和 relations。语义故障保留关键词能力，全部检索来源失败必须明确报告，不能伪装成正常无匹配。保留旧投影的失败文档需标明路径和过期原因。
 
 证据只用于定位；Agent 形成结论前应回读关键原文。
 

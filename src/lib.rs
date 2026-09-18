@@ -2,15 +2,15 @@
 //!
 //! Reads a directory of Markdown files (the "wiki"), projects an incremental
 //! search index (keywords + optional vectors) into an embedded LanceDB engine
-//! plus a small metadata store (`rusqlite`) for the sync ledger, document
-//! graph and persistent state, and exposes retrieval/governance through a CLI
+//! plus a small metadata store (`rusqlite`) for the projection commit ledger,
+//! and exposes retrieval/governance through a CLI
 //! and an MCP server.
 //!
 //! Notable constraints:
 //! - Markdown files are the source of truth. All indexes are derived and must
 //!   be fully rebuildable from the wiki.
-//! - The SQLite store is metadata-only (ledger / graph / state). It never does
-//!   full-text search or vector search — that belongs to the retrieval backend.
+//! - SQLite is control-plane state only. All user-facing reads, including
+//!   structured filters and the explicit relation graph, use LanceDB.
 //! - Domain types must stay dependency-free of third-party I/O crates.
 
 #![forbid(unsafe_code)]
@@ -30,4 +30,4 @@ pub use governance::types::{
     ValidationScope,
 };
 pub use projection::types::SyncReport;
-pub use retrieval::types::{ContextQuery, SearchResult};
+pub use retrieval::types::{ContextQuery, KeywordMode, SearchOrder, SearchResult};

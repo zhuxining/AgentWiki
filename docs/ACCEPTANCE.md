@@ -64,7 +64,7 @@ K 架构与工程契约 → L 检索质量（非阻塞）
 | D3 | 变化重投 | 内容变化 → 重读解析一次，替换切片、重新提取关系、账本确认在投影成功之后 | 黑盒 | ✅ R2 |
 | D4 | 单篇失败隔离 | 解析失败保留旧证据、进入 degraded、下次重试；不误报删除；其它文档不受影响 | 黑盒 | ✅ R2 |
 | D5 | 删除同步 | 账本有而磁盘无 → 索引与账本删除，removed 计数正确 | 黑盒 | ✅ R2 |
-| D6 | 移动识别 | 内容哈希唯一配对的删除+新增识别为移动，保留 stable_identity；moved 计数正确 | 白盒 | ✅ R9（GAP-2 修复：rename 后 moved=1，身份继承） |
+| D6 | 移动识别 | 内容哈希唯一配对的删除+新增识别为移动；路径保持唯一身份；moved 计数正确 | 白盒 | ✅ |
 | D7 | 向量批处理 | 按输入哈希 + 模型身份复用；模型身份含版本与维度，变更使旧向量失效；失败保留关键词能力待重试 | 白盒 | ✅ R5（端到端：模型同步 degraded=0、向量复用二次同步 unchanged=3） |
 | D8 | 跨进程锁 | fs2 排他锁覆盖同步/重建；部分完成可幂等重试，账本不提前确认 | 黑盒 | ✅ R2 |
 | D9 | 重建与恢复 | rebuild 全量重建；SQLite 版本不兼容触发重建，不迁移文档数据 | 黑盒 | ✅ R2 |
@@ -77,10 +77,10 @@ K 架构与工程契约 → L 检索质量（非阻塞）
 | E1 | 关键词检索 | 中文专名、中英混合、代码标识符（切片级 BM25/FTS）可命中 | 黑盒 | ✅ R6（GAP-3 修复后：中文专名/连续词/混合/标识符全部命中） |
 | E2 | 近期检索 | 空 query 按真实文件 mtime 返回最近文档（非索引时间） | 黑盒 | ✅ R2 |
 | E3 | scope 过滤 | 目录覆盖自身及子树；文档精确匹配；越界/非法返回错误不伪装空结果 | 黑盒 | ✅ R2 |
-| E4 | 元数据过滤 | tags 全部满足、note_types 任一匹配、metadata_filters 等值全满足；空列表不限制 | 黑盒 | ✅ R2（集成测试覆盖；CLI 未暴露参数，见 I3） |
+| E4 | Lance 元数据预过滤 | tags LabelList 全部满足、note_types Bitmap 任一匹配、canonical facets 等值全满足，修改时间范围生效；空查询和 top-k 召回共用同一过滤器 | 黑盒 | ✅ 集成测试覆盖深位候选不会因过滤后截断而丢失 |
 | E5 | 语义检索与降级 | 启用模型后追加语义候选；模型不可用 → degraded + 关键词兜底，不伪装无匹配 | 黑盒 | ✅ R5（断网降级 ✓；语义端到端 ✓；无答案语义见 GAP-12） |
-| E6 | 混合与策略 | 词法+语义由 LanceDB RRF 融合；返回 strategy 与真实 match_sources（exact/keyword/semantic/recency） | 白盒 | ✅ R12（GAP-4/5：RRF k=60 融合 + exact 来源；引擎 rerank_hybrid 因跨表 row_id 限制不可用，公式为组件边界内的标准实现） |
-| E7 | 证据预算 | 每文档最多 2 片段；limit 默认 10、范围 1..20；章节多的单篇不耗竭候选池 | 黑盒 | ✅ R2 |
+| E6 | 混合与策略 | document 与 fragment 分别对精确、词法、语义候选执行 RRF；返回 strategy 与真实 match_sources（exact/keyword/semantic/recency） | 白盒 | ✅ 两类检索单元独立融合 |
+| E7 | 结果预算 | document_limit 默认 5、fragment_limit 默认 10，范围均为 1..20；文档发现与片段证据不竞争同一候选池 | 黑盒 | ✅ |
 | E8 | 无答案语义 | 正常无匹配不是故障（degraded 为空）；全部检索来源失败必须明确报告 | 黑盒 | ✅ R2 |
 | E9 | 精确匹配优先 | 精确项优先于模糊项；rank_score 仅本次排序可比较 | 白盒 | ✅ R12（exact 腿排名第一并标记来源） |
 
@@ -90,7 +90,7 @@ K 架构与工程契约 → L 检索质量（非阻塞）
 | --- | --- | --- | --- | --- |
 | F1 | 关系提取 | `[[wikilink]]`、相对 `.md` 链接、frontmatter `relations` 均提取；解析器事件驱动不字符串扫描 | 白盒 | ✅ R3 |
 | F2 | 目标解析与状态 | 相对目录解析、`/` 开头按根解析、`..` 折叠；越界目标拒绝并报告；目标缺失 unresolved、出现后 resolved | 白盒 | ✅ R3 |
-| F3 | 相关文档契约 | 每结果 related 最多 5 条一跳入边/出边，含 path/filename/relation_type/direction/resolution_status/source_section/context | 白盒 | ✅ R11（GAP-6 修复，MCP 探针验证全字段） |
+| F3 | 相关文档契约 | include_relations 默认 false；显式开启后统一返回最多 5 条一跳入边/出边，含 path/filename/relation_type/direction/resolution_status/source_section/context | 白盒 | ✅ 不自动扩展目标内容或多跳 |
 | F4 | 证据可回读 | 证据携带路径、章节、原文片段；仅用于定位，不替代原文 | 白盒 | ✅ R3 |
 
 ## G. 治理规则
@@ -121,7 +121,7 @@ K 架构与工程契约 → L 检索质量（非阻塞）
 | --- | --- | --- | --- | --- |
 | I1 | show-config | 输出 config 来源标注（cli/config/default）、投影目录、模型状态；无配置时创建默认配置 | 黑盒 | ✅ R4 |
 | I2 | sync-index / rebuild-index | 输出 indexed/removed/moved/unchanged/vectors_pending/degraded 全字段；degraded 逐条打印 | 黑盒 | ✅ R4 |
-| I3 | query | query/limit(1..20)/scope 参数生效；输出路径、章节、分数、片段；空 query 为近期 | 黑盒 | ✅ R10（GAP-11 修复：--tag/--note-type/--metadata 可用） |
+| I3 | query | query/document-limit/limit/scope/keyword/keyword-all/tag/note-type/metadata/修改时间/排序/关系开关生效；分别输出文档与片段；空 query 和 keywords 为近期 | 黑盒 | ✅ |
 | I4 | validate-wiki 矩阵 | `--path` / `--full` / 缺省 / `--fix-format` 全组合与错误提示符合契约 | 黑盒 | ✅ R4 |
 | I5 | 错误输出 | 库错误收敛为 anyhow 在入口打印 `error: ...`，退出码非零；无 panic | 黑盒 | ✅ R4 |
 
@@ -130,7 +130,7 @@ K 架构与工程契约 → L 检索质量（非阻塞）
 | ID | 验收项 | 验收标准 | 方法 | 状态 |
 | --- | --- | --- | --- | --- |
 | J1 | 服务生命周期 | stdio 启动、三个工具注册、initialize/tools/list 正常；无 mcp feature 时提示 | 黑盒 | ✅ R4 |
-| J2 | get_wiki_context 契约 | 参数（query/scope/limit/tags/note_types/metadata_filters）与目标返回结构（strategy/degraded/results[]/truncated，结果含 path/filename/summary/section/snippet/rank_score/match_sources/modified_at/frontmatter/related） | 黑盒 | ✅ R11（GAP-8 修复，探针验证契约全键） |
+| J2 | get_wiki_context 契约 | 参数包含自然语言、显式关键词及 any/all、scope、两类 limit、结构化过滤、时间、排序和关系开关；返回 strategy/degraded/documents[]/fragments[]/relations[]/truncated | 黑盒 | ✅ 文档与片段独立返回 |
 | J3 | get_wiki_rules 契约 | scope 参数；返回根规则、匹配目录规则、default_type、required_fields、tag_aliases、动态 known_tags、wiki_root、guide_content、指纹 | 黑盒 | ✅ R11（GAP-9 修复，探针验证含动态 known_tags） |
 | J4 | validate_wiki 契约 | path/full/fix_format 矩阵；issues + formatted_paths 结构；只读与修复模式结构一致 | 黑盒 | ✅ R4（结构一致；互斥错误以 RPC -32603 返回） |
 | J5 | 错误与并发 | 错误映射为 ErrorData；阻塞工作走 spawn_blocking；AgentWiki 用例锁防止并发写与重建交错 | 白盒 | ✅ R4 |
@@ -182,7 +182,7 @@ K 架构与工程契约 → L 检索质量（非阻塞）
 | R6 | 修复 GAP-3（jieba 中文分词） | FTS 改用 jieba 分词，`retrieval_format` 版本标记使旧投影自动删库重建，词典缺失明确报错；新增中文 FTS 回归测试与格式版本单测；62 项测试全过、fmt/clippy 干净；黑盒复验中文全场景命中 | 2026-09-14 |
 | R7 | 修复 GAP-12（语义无答案阈值） | vector_search 读取真实 `_distance` 相似度并按阈值过滤；SEMANTIC_MIN_SIMILARITY=0.46 基于 18 个查询标定（无答案 top1 0.393–0.450、相关最低 0.476）；黑盒复验无答案 0 hits、相关改写命中；全量测试通过 | 2026-09-14 |
 | R8 | 修复 GAP-1、GAP-7、GAP-10 | 删除 4 个死依赖（time 退出依赖树）；markdown.formatting 报告 + format.conflict/failed 分类 + RULES.md 标注同步；README 过时标注修正；全量检查通过（期间 cargo clean 处理磁盘空间，重建 ORT 依赖缓存） | 2026-09-14 |
-| R9 | 修复 GAP-2（移动识别） | 唯一内容哈希配对继承 stable_identity（歧义降级为增删）；黑盒+单测 moved=1、新路径可检索、幂等 | 2026-09-14 |
+| R9 | 修复 GAP-2（移动识别） | 唯一内容哈希配对识别移动；路径保持唯一身份，黑盒+单测覆盖 moved=1、新路径可检索、幂等 | 2026-09-14 |
 | R10 | 修复 GAP-11（CLI 过滤参数） | query 增加 --tag/--note-type/--metadata KEY=VALUE；黑盒验证全部满足/任一匹配/等值过滤/错误提示 | 2026-09-14 |
 | R11 | 修复 GAP-6、GAP-8、GAP-9（MCP 协议） | related 契约全字段（出入边/上下文）；get_wiki_context 组装契约结构（strategy/truncated/RFC3339 modified_at）；get_wiki_rules 结构化规则+动态 known_tags+修复前确认投影新鲜度；63 项测试双 feature 全过、clippy 零警告 | 2026-09-14 |
 | R12 | 修复 GAP-4、GAP-5（检索融合与精确来源） | 三腿 RRF 融合（k=60）+ exact 文件名/路径腿（all_paths）；黑盒：双命中 1/61×2 排序高于单腿、exact match_sources 标记、无答案仍阈值拦截；63 项测试全过 | 2026-09-14 |
@@ -199,7 +199,7 @@ K 架构与工程契约 → L 检索质量（非阻塞）
 | 编号 | 差距描述 | 定位（文件/行） | 影响 | 建议 |
 | --- | --- | --- | --- | --- |
 | GAP-1 | ~~死依赖 ×4~~ **✅ R8 已修复**：从 Cargo.toml 移除 `tracing`、`tracing-subscriber`、`time`(formatting)、`walkdir` 直接依赖；锁文件由 Cargo 重新解析（`time` 完全退出依赖树，`tracing`/`walkdir` 仅作为 lancedb 链传递依赖保留） | Cargo.toml 已删；Cargo.lock 重解析 | 已修复 | — |
-| GAP-2 | ~~移动识别未实现~~ **✅ R9 已修复**：唯一内容哈希配对删除+新增识别为移动并继承 stable_identity（歧义按增删处理）；moved 计数真实。黑盒+单测：rename 后 moved=1 indexed=1 removed=1，新路径可检索、二次同步幂等 | src/projection/sync.rs（配对与继承逻辑） | 已修复 | — |
+| GAP-2 | ~~移动识别未实现~~ **✅ R9 已修复**：唯一内容哈希配对删除+新增识别为移动，路径是身份且不维护跨路径 ID；黑盒+单测覆盖 rename 后 moved=1、新路径可检索和二次同步幂等 | src/projection/sync.rs（配对逻辑） | 已修复 | — |
 | GAP-3 | ~~中文 FTS 检索完全失效~~ **✅ R6 已修复**：FTS 显式配置 jieba 分词（`FtsIndexBuilder::new("jieba/default", ...)`），旧投影经 `retrieval_format` 版本标记自动删库全量重建；词典经 `LANCE_LANGUAGE_MODEL_HOME`/平台数据目录提供，缺失时明确报错。黑盒复验：认证方案/令牌/轮换/借用检查器/OAuth2 全命中，无答案 0 命中，增量同步正常 | src/projection/lance.rs（FTS 构建与 ensure_language_model）；src/projection/metadata.rs:RETRIEVAL_FORMAT；src/projection/sync.rs assemble/sync_locked | 已修复；中文检索恢复 | 后续在固定语料重跑 L1 基线 |
 | GAP-4 | ~~混合检索未实现~~ **✅ R12 已修复**：keyword/semantic/exact 三腿按标准 RRF（k=60，Cormack et al.）融合，双腿同命中排序更高（黑盒：1/61×2 > 1/62）；引擎 `rerank_hybrid` 因 keyword/vector 分属两表（`_rowid` 不可比）不可用，已注释说明组件边界；strategy=mixed 由 MCP 层按 sources 推导 | src/retrieval/search.rs（RRF 融合） | 已修复 | 若未来向量并入 chunks 单表，可换回 `lancedb::rerankers::RRFReranker` |
 | GAP-5 | ~~精确匹配（exact）来源未实现~~ **✅ R12 已修复**：文件名 stem 或相对路径==查询（大小写不敏感、截断 64 字符）的文档进入 exact 腿并 rank 第一；MCP 探针验证 match_sources=['exact']、rank_score=1/61；评分前不再忽略文件名精确匹配文档 | src/retrieval/search.rs（exact_matches）；src/projection/metadata.rs all_paths | 已修复 | — |

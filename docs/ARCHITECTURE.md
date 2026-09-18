@@ -14,8 +14,8 @@ HTTP API、云同步、Web UI、查询 LLM、实体自动抽取和操作审计�
 | --- | --- |
 | CLI / 配置 | `src/cli.rs` 已有命令路由和配置加载；模型配置可驱动可选语义索引 |
 | Markdown / 规则 / 校验 | 已接入 pulldown-cmark、text-splitter、globset、dprint；格式修复仍需显式 `--fix-format` |
-| 同步 / SQLite / 图谱 | 已有同步流程和元数据表；扫描会读取全部文档，变化文档重复读取；移动计数恒为零，解析错误隔离、重试与关系解析仍需补齐 |
-| 检索 | LanceDB 已接入切片表、FTS 索引、作用域过滤和关键词查询；配置 embedding model 后建立向量表并追加语义候选 |
+| 同步 / SQLite | SQLite 只保存路径、文件指纹、向量输入哈希和投影格式，用作独立提交账本 |
+| 检索 / 图谱 | LanceDB 统一承接文档与片段、结构化过滤、精确匹配、关系、FTS 和可选向量查询 |
 | MCP | `src/mcp.rs` 已用 rmcp 3.3 提供三个 stdio 工具 |
 | 语义 / 格式修复 | FastEmbed 已接入同步与 LanceDB 向量投影；默认关闭模型，格式修复提供 CLI 显式入口 |
 
@@ -26,7 +26,7 @@ HTTP API、云同步、Web UI、查询 LLM、实体自动抽取和操作审计�
 | 职责 | 目标组件 | 自有代码边界 |
 | --- | --- | --- |
 | 全文 / 向量 / 混合 | LanceDB | 字段映射、查询约束、证据组织与降级 |
-| 元数据 | rusqlite，bundled | 同步账本、文档信息、关系、失败记录 |
+| 投影账本 | rusqlite，bundled | 文件指纹、向量确认状态和投影格式；不参与用户查询 |
 | 本地 embedding | FastEmbed | 输入构造、模型配置、缓存与错误处理 |
 | Markdown | pulldown-cmark | 标题、链接、源位置的领域映射 |
 | 章节切分 | text-splitter | 在标题章节内切分，保留章节路径 |
@@ -72,7 +72,7 @@ src/
 │   ├── mod.rs             # 可重建投影资源束
 │   ├── types.rs           # 同步报告
 │   ├── sync.rs            # 增量同步、重建、重试
-│   ├── metadata.rs        # SQLite 元数据
+│   ├── metadata.rs        # SQLite 投影提交账本
 │   ├── lance.rs           # LanceDB 唯一边界
 │   └── embedding.rs       # FastEmbed 唯一边界
 ├── retrieval/
@@ -98,7 +98,7 @@ tests/
 ```text
 CLI / MCP → AgentWiki
               ├─ projection → document / LanceDB / FastEmbed / SQLite
-              ├─ retrieval → projection，附加 SQLite 关系
+├─ retrieval → projection，所有读取由 LanceDB 完成
               └─ governance → document / rules / format
 ```
 
@@ -141,7 +141,7 @@ Wiki 根目录的 `AGENTWIKI.md` 是唯一组织规则入口：Frontmatter 是�
 5. 更新关键词、文档信息和关系；向量按模型身份和实际输入哈希复用或同步批量计算。模型身份包含适配后的版本和维度，变更时旧向量失效。
 6. 元数据账本只有在相应投影成功后才确认。语义失败不撤销关键词投影，保留独立失败依据，下次同步重试。
 
-SQLite 不做全文或向量检索；LanceDB 与 SQLite 没有跨库事务。写操作由 fs2 跨进程锁协调，部分完成操作必须幂等重试。全局 generation 不能掩盖部分失败。查询不消费未确认的新旧混合状态；失败保留的旧证据必须附带诊断。
+SQLite 不参与任何面向 Agent 的查询；LanceDB 统一保存 document/fragment、结构化过滤字段和显式关系。SQLite 只在 Lance 投影成功后确认文件指纹与向量输入哈希。两者没有跨库事务，写操作由 fs2 跨进程锁协调，部分完成操作必须幂等重试。
 
 不维护后台向量队列、watcher、pending 恢复或独立向量 manifest。首次和变更查询允许等待同步向量批处理；计算失败报告降级，进程退出后通过哈希与失败记录再次同步。
 
@@ -149,11 +149,15 @@ SQLite 不做全文或向量检索；LanceDB 与 SQLite 没有跨库事务。写
 
 ### 4.3 检索与证据
 
-普通查询使用精确匹配、BM25 和可选语义检索；词法与语义混合交给 LanceDB RRF。应用只保留精确项优先、近期意图、文档片段限额及证据组织等产品策略，不建立通用排名框架。
+检索内核不解释 `profile`、`events`、`skills` 等文档类型的业务语义；场景选择、查询组装、权限与范围判断由 Agent 按 `AGENTWIKI.md` 完成。内核只忠实执行显式查询：路径范围、类型、标签、扩展 Frontmatter 等值条件、修改时间、关键词模式、排序方式和关系开关。
 
-候选查询尽早施加 scope、tags、note_types 和 metadata_filters，过滤数据不能直接拼接未经验证的查询表达式。限制每篇最多两个片段，并保证章节很多的单篇文档不会耗尽整个候选池；必要时有界补取候选。
+每篇文档固定生成一个 document 检索单元；正文按 Markdown 标题生成零到多个 fragment 单元，超长章节再使用统一的 text-splitter 参数切分。类型不参与切片策略。document 的检索文本由路径、标题、别名、摘要、标签和标题大纲组成；fragment 额外包含章节与正文。两类单元分别召回、融合和限额，避免文档发现与局部证据竞争同一候选池。
 
-空查询按真实文件修改时间返回近期文档；明确近期主题查询加入新近度，普通主题查询不施加时间偏置。limit 默认 10、范围 1..20，单条证据最多五条一跳关系，具体接口见 MCP 契约。
+普通查询并行使用精确匹配、BM25 和可选语义检索，再按检索单元分别执行 RRF。显式 `keywords` 支持 any/all；内核不从自然语言查询推导关键词，不自动扩展标签、类型或关系，也不根据“最近”等措辞猜测排序意图。
+
+scope、tags、note_types、metadata_filters 和修改时间在 LanceDB 的 BM25/向量候选生成前施加；空 query、精确 path/title/alias、最近修改、known_tags 和 Frontmatter 水合也查询 LanceDB。tags、aliases 和 canonical facets 使用 `List<Utf8>` 与 LabelList 索引，类型和单元类型使用 Bitmap，路径与时间使用 BTree。过滤值必须转义，不能拼接未经验证的检索表达式。
+
+document_limit 默认 5，fragment_limit 默认 10，范围均为 1..20。关系默认关闭；显式开启后只返回最多五条一跳边及声明上下文，不自动读取目标文档或扩展多跳。具体接口见 MCP 契约。
 
 关系仅从标准内部 Markdown 链接、Wiki 链接和 Frontmatter relations 派生，不自动抽取实体。保留方向、来源章节、原文上下文；目标缺失保留 unresolved，目标出现或删除时重新解析。越界目标拒绝并报告。
 

@@ -2,13 +2,23 @@ use pulldown_cmark::{Event, Parser, Tag, TagEnd};
 use sha2::{Digest, Sha256};
 use text_splitter::{ChunkConfig, TextSplitter};
 
-use super::types::{PathScope, Slice};
+use super::types::{Frontmatter, PathScope, RetrievalUnitKind, Slice};
 
 const MAX_CHUNK_CHARS: usize = 1_200;
 const OVERLAP_CHARS: usize = 150;
 
-pub fn chunk_document(summary: &str, body: &str, path: &PathScope) -> Vec<Slice> {
+pub fn chunk_document(
+    frontmatter: &Frontmatter,
+    body: &str,
+    path: &PathScope,
+    modified_at_ns: i64,
+) -> Vec<Slice> {
     let filename = path.0.file_stem().unwrap_or_else(|| path.0.as_str());
+    let summary = frontmatter
+        .get("summary")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    let explicit_title = frontmatter.get("title").and_then(serde_json::Value::as_str);
     let mut sections: Vec<(String, String)> = Vec::new();
     let mut headings: Vec<(usize, String)> = Vec::new();
     let mut heading = None;
@@ -48,24 +58,80 @@ pub fn chunk_document(summary: &str, body: &str, path: &PathScope) -> Vec<Slice>
     if !content.is_empty() {
         sections.push((breadcrumb(&headings), content.to_owned()));
     }
-    let mut slices = Vec::new();
-    let mut ordinal = 0u32;
+    let title = explicit_title
+        .or_else(|| headings.first().map(|(_, title)| title.as_str()))
+        .unwrap_or(filename);
+    let tag_values = frontmatter
+        .get("tags")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .map(|value| value.trim().to_lowercase())
+        .collect::<Vec<_>>();
+    let tags = tag_values.join(", ");
+    let note_type = frontmatter
+        .get("type")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("note")
+        .to_owned();
+    let facets = frontmatter
+        .iter()
+        .map(|(key, value)| {
+            format!(
+                "{key}={}",
+                serde_json::to_string(value).expect("frontmatter JSON value serializes")
+            )
+        })
+        .collect::<Vec<_>>();
+    let alias_values = frontmatter
+        .get("aliases")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .map(|value| value.trim().to_lowercase())
+        .collect::<Vec<_>>();
+    let aliases = alias_values.join(", ");
+    let outline = headings
+        .iter()
+        .map(|(_, heading)| heading.as_str())
+        .collect::<Vec<_>>()
+        .join(" / ");
+    let document_source = format!("{title}\n{summary}\n{outline}").trim().to_owned();
+    let document_search = format!(
+        "{}\n{title}\n{aliases}\n{summary}\n{tags}\n{outline}",
+        path.0
+    )
+    .trim()
+    .to_owned();
+    let mut slices = vec![Slice {
+        path: path.clone(),
+        chunk_id: hex::encode(Sha256::digest(format!("{}\0document", path.0).as_bytes())),
+        unit_kind: RetrievalUnitKind::Document,
+        note_type: note_type.clone(),
+        tags: tag_values.clone(),
+        facets: facets.clone(),
+        title: title.to_owned(),
+        aliases: alias_values.clone(),
+        frontmatter: frontmatter.clone(),
+        modified_at_ns,
+        ordinal: 0,
+        section: String::new(),
+        content: summary.to_owned(),
+        search_text: document_search,
+        source_hash: hex::encode(Sha256::digest(document_source.as_bytes())),
+    }];
+    let mut ordinal = 1u32;
     if sections.is_empty()
         || (!sections.iter().any(|(_, content)| !content.is_empty()) && body.trim().is_empty())
     {
-        slices.push(empty_slice(
-            summary,
-            filename,
-            path,
-            ordinal,
-            breadcrumb(&headings),
-        ));
         return slices;
     }
     for (section, content) in sections {
         for fragment in split_oversized(&content) {
             let source = format!("{section}\n{fragment}").trim().to_string();
-            let search_text = format!("{filename}\n{summary}\n{source}")
+            let search_text = format!("{}\n{title}\n{summary}\n{tags}\n{source}", path.0)
                 .trim()
                 .to_string();
             slices.push(Slice {
@@ -73,6 +139,14 @@ pub fn chunk_document(summary: &str, body: &str, path: &PathScope) -> Vec<Slice>
                 chunk_id: hex::encode(Sha256::digest(
                     format!("{}\0{}\0{}", path.0, ordinal, source).as_bytes(),
                 )),
+                unit_kind: RetrievalUnitKind::Fragment,
+                note_type: note_type.clone(),
+                tags: tag_values.clone(),
+                facets: facets.clone(),
+                title: title.to_owned(),
+                aliases: Vec::new(),
+                frontmatter: Frontmatter::new(),
+                modified_at_ns,
                 ordinal,
                 section: section.clone(),
                 content: fragment,
@@ -83,30 +157,6 @@ pub fn chunk_document(summary: &str, body: &str, path: &PathScope) -> Vec<Slice>
         }
     }
     slices
-}
-
-fn empty_slice(
-    summary: &str,
-    filename: &str,
-    path: &PathScope,
-    ordinal: u32,
-    section: String,
-) -> Slice {
-    let source = section.clone();
-    let search_text = format!("{filename}\n{summary}\n{source}")
-        .trim()
-        .to_string();
-    Slice {
-        path: path.clone(),
-        chunk_id: hex::encode(Sha256::digest(
-            format!("{}\0{}\0{}", path.0, ordinal, source).as_bytes(),
-        )),
-        ordinal,
-        section,
-        content: String::new(),
-        search_text,
-        source_hash: hex::encode(Sha256::digest(source.as_bytes())),
-    }
 }
 
 fn split_oversized(content: &str) -> Vec<String> {
@@ -126,19 +176,49 @@ mod tests {
 
     #[test]
     fn nested_heading_without_parent_is_supported() {
-        let slices = chunk_document("", "### Nested\n\n证据\n", &PathScope("a.md".into()));
-        assert_eq!(slices[0].section, "Nested");
+        let slices = chunk_document(
+            &Frontmatter::new(),
+            "### Nested\n\n证据\n",
+            &PathScope("a.md".into()),
+            0,
+        );
+        assert_eq!(slices[0].unit_kind, RetrievalUnitKind::Document);
+        assert_eq!(slices[1].section, "Nested");
     }
 
     #[test]
     fn code_headings_stay_inside_their_section() {
         let slices = chunk_document(
-            "",
+            &Frontmatter::new(),
             "## Parent\n\n```sh\n# shell comment\n```\n\ntext\n\nSibling\n=======\n\nnext\n",
             &PathScope("a.md".into()),
+            0,
         );
-        assert_eq!(slices.len(), 2);
-        assert!(slices[0].content.contains("# shell comment"));
-        assert_eq!(slices[1].section, "Sibling");
+        assert_eq!(slices.len(), 3);
+        assert!(slices[1].content.contains("# shell comment"));
+        assert_eq!(slices[2].section, "Sibling");
+    }
+
+    #[test]
+    fn document_type_does_not_change_slicing() {
+        let body = "# Title\n\nintro\n\n## Detail\n\nevidence\n";
+        let mut profile = Frontmatter::new();
+        profile.insert("type".into(), serde_json::json!("profile"));
+        let mut event = Frontmatter::new();
+        event.insert("type".into(), serde_json::json!("events"));
+        let profile_units = chunk_document(&profile, body, &PathScope("a.md".into()), 1);
+        let event_units = chunk_document(&event, body, &PathScope("a.md".into()), 1);
+
+        assert_eq!(profile_units.len(), event_units.len());
+        assert_eq!(
+            profile_units
+                .iter()
+                .map(|unit| (&unit.unit_kind, &unit.section, &unit.content))
+                .collect::<Vec<_>>(),
+            event_units
+                .iter()
+                .map(|unit| (&unit.unit_kind, &unit.section, &unit.content))
+                .collect::<Vec<_>>()
+        );
     }
 }

@@ -23,7 +23,7 @@ async fn rebuild_repopulates_an_unchanged_archive() {
         app.query(ContextQuery::default())
             .await
             .unwrap()
-            .slices
+            .documents
             .len(),
         1
     );
@@ -46,7 +46,7 @@ async fn failed_document_preserves_evidence_and_retries() {
             app.query(ContextQuery::default())
                 .await
                 .unwrap()
-                .slices
+                .documents
                 .len(),
             1
         );
@@ -67,7 +67,8 @@ async fn no_answer_is_not_a_failure_and_scope_is_validated() {
         })
         .await
         .unwrap();
-    assert!(result.slices.is_empty());
+    assert!(result.documents.is_empty());
+    assert!(result.fragments.is_empty());
     assert!(result.degraded.is_empty());
     assert!(
         app.query(ContextQuery {
@@ -101,7 +102,7 @@ async fn rename_is_reported_as_a_move() {
         })
         .await
         .unwrap();
-    assert_eq!(result.slices[0].slice.path.0.as_str(), "new.md");
+    assert_eq!(result.fragments[0].slice.path.0.as_str(), "new.md");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -125,5 +126,5 @@ async fn concurrent_use_cases_are_serialized_without_deadlock() {
         })
     };
     syncing.await.unwrap().unwrap();
-    assert_eq!(querying.await.unwrap().unwrap().slices.len(), 1);
+    assert_eq!(querying.await.unwrap().unwrap().fragments.len(), 1);
 }

@@ -9,7 +9,8 @@ use clap::{Parser, Subcommand};
 
 use agentwiki::config::AppConfig;
 use agentwiki::{
-    AgentWiki, ContextQuery, OpenOptions, PathScope, Severity, ValidationRequest, ValidationScope,
+    AgentWiki, ContextQuery, KeywordMode, OpenOptions, PathScope, SearchOrder, Severity,
+    ValidationRequest, ValidationScope,
 };
 
 /// Subcommand routing.
@@ -34,9 +35,12 @@ enum Command {
     Query {
         /// Free-text query; empty lists recently modified documents.
         query: String,
-        /// Limit slices returned (1..=20).
+        /// Limit fragment results returned (1..=20).
         #[arg(long, default_value_t = 10)]
         limit: usize,
+        /// Limit document results returned (1..=20).
+        #[arg(long, default_value_t = 5)]
+        document_limit: usize,
         /// Restrict to a wiki-relative path scope.
         #[arg(long, default_value_t = String::new())]
         scope: String,
@@ -46,9 +50,27 @@ enum Command {
         /// Require one of these document types (repeatable).
         #[arg(long = "note-type", value_name = "TYPE")]
         note_types: Vec<String>,
+        /// Explicit keyword (repeatable).
+        #[arg(long = "keyword", value_name = "TERM")]
+        keywords: Vec<String>,
+        /// Require all explicit keywords instead of any keyword.
+        #[arg(long)]
+        keyword_all: bool,
         /// Frontmatter equality filter KEY=VALUE (repeatable; all must hold).
         #[arg(long = "metadata", value_name = "KEY=VALUE")]
         metadata: Vec<String>,
+        /// Only include files modified at or after this unix nanosecond value.
+        #[arg(long)]
+        modified_after_ns: Option<i64>,
+        /// Only include files modified at or before this unix nanosecond value.
+        #[arg(long)]
+        modified_before_ns: Option<i64>,
+        /// Sort by modified time instead of relevance.
+        #[arg(long)]
+        modified_desc: bool,
+        /// Return one-hop relation metadata for the primary result.
+        #[arg(long)]
+        include_relations: bool,
     },
     /// Reconcile the index/metadata projections with the wiki.
     SyncIndex,
@@ -101,10 +123,17 @@ async fn run() -> anyhow::Result<()> {
         Command::Query {
             query,
             limit,
+            document_limit,
             scope,
             tags,
             note_types,
+            keywords,
+            keyword_all,
             metadata,
+            modified_after_ns,
+            modified_before_ns,
+            modified_desc,
+            include_relations,
         } => {
             // Prefer to serve a fresh projection on-demand.
             let mut metadata_filters = serde_json::Map::new();
@@ -119,14 +148,37 @@ async fn run() -> anyhow::Result<()> {
             let q = ContextQuery {
                 query,
                 scope,
-                limit,
+                document_limit,
+                fragment_limit: limit,
+                keywords,
+                keyword_mode: if keyword_all {
+                    KeywordMode::All
+                } else {
+                    KeywordMode::Any
+                },
                 tags,
                 note_types,
                 metadata_filters,
+                modified_after_ns,
+                modified_before_ns,
+                order: if modified_desc {
+                    SearchOrder::ModifiedDesc
+                } else {
+                    SearchOrder::Relevance
+                },
+                include_relations,
                 ..Default::default()
             };
             let res = wiki.query(q).await?;
-            for hit in &res.slices {
+            for hit in &res.documents {
+                println!(
+                    "DOC {} {:.4}{}",
+                    hit.slice.path.0,
+                    hit.score,
+                    snippet(&hit.slice.content)
+                );
+            }
+            for hit in &res.fragments {
                 let title = hit.slice.section.clone();
                 println!(
                     "{} [{}]{}{}",
@@ -140,7 +192,12 @@ async fn run() -> anyhow::Result<()> {
                     snippet(&hit.slice.content)
                 );
             }
-            println!("{} hits; degraded={}", res.slices.len(), res.degraded.len());
+            println!(
+                "{} documents; {} fragments; degraded={}",
+                res.documents.len(),
+                res.fragments.len(),
+                res.degraded.len()
+            );
         }
         Command::SyncIndex => {
             let report = wiki.sync().await?;

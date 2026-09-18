@@ -21,8 +21,8 @@ Agent 原生文件工具负责已知路径读取和文档增删改；AgentWiki �
 Markdown 文档库 + AGENTWIKI.md 规则
                 ↓ 增量同步、解析、章节切分
        ┌────────┴──────────┐
-       │ LanceDB           │ SQLite
-       │ 全文 / 向量 / RRF │ 账本 / 文档信息 / 关系
+       │ LanceDB                         │ SQLite
+       │ 全文 / 向量 / 过滤 / 关系 / RRF │ 投影提交账本
        └────────┬──────────┘
                 ↑ FastEmbed 本地向量生成
                 ↓

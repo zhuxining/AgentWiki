@@ -101,12 +101,7 @@ impl AgentWiki {
         let known_tags = {
             let mut projection = self.projection.lock().await;
             projection.ensure_fresh().await?;
-            let mut counts: Vec<_> = projection
-                .meta
-                .with(|store| store.all_tags())
-                .await?
-                .into_iter()
-                .collect();
+            let mut counts: Vec<_> = projection.index.all_tags().await?.into_iter().collect();
             counts.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
             counts.into_iter().map(|(tag, _)| tag).collect()
         };
@@ -154,11 +149,18 @@ impl AgentWiki {
 }
 
 fn validate_query(query: &ContextQuery) -> Result<()> {
-    if !(1..=20).contains(&query.limit)
+    if !(1..=20).contains(&query.document_limit)
+        || !(1..=20).contains(&query.fragment_limit)
         || query.query.len() > 8192
+        || query.keywords.len() > 20
+        || query.keywords.iter().any(|keyword| keyword.len() > 256)
         || query.tags.len() > 100
         || query.note_types.len() > 100
         || query.metadata_filters.len() > 100
+        || query
+            .modified_after_ns
+            .zip(query.modified_before_ns)
+            .is_some_and(|(after, before)| after > before)
     {
         return Err(AgentWikiError::Config("invalid query limits".into()));
     }

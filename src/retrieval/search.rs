@@ -1,283 +1,325 @@
-//! Retrieval orchestration: fuse keyword, semantic and exact-match candidates
-//! with reciprocal rank fusion (RRF, k=60, Cormack et al.), apply scope /
-//! frontmatter filters and attach one-hop related documents.
-//!
-//! `run_query` is deliberately the only query entry point; it reads candidates
-//! from [`crate::retrieval::LanceIndex`] and related documents from the
-//! metadata store, and reports non-fatal degradation rather than failing the
-//! whole request when a single source is unavailable.
-//!
-//! RRF is computed here (not via `lancedb::rerankers::RRFReranker`) because
-//! the keyword and vector legs live in separate Lance tables, and the engine
-//! reranker aligns results by table-local row ids, which are not comparable
-//! across tables. The formula itself is the standard k=60 scoring.
+//! Query-faithful retrieval orchestration.
 
-use crate::document::types::PathScope;
+use std::collections::{HashMap, HashSet};
+
+use crate::document::types::{PathScope, RetrievalUnitKind};
 use crate::error::Result;
 use crate::projection::Projection;
 use crate::retrieval::types::{
-    ContextQuery, RankedSlice, RelatedDocument, SearchResult, SearchStrategy,
+    ContextQuery, KeywordMode, RankedSlice, RelatedDocument, SearchOrder, SearchResult,
+    SearchStrategy,
 };
 
-/// RRF constant (Cormack et al., 2009; k=60 near-optimal).
 const RRF_K: f64 = 60.0;
 
-/// Run a context retrieval against an assembled sync context.
-///
-/// Guarantees:
-/// - never fails on a single-source problem; it surfaces in `degraded` instead;
-/// - an absent or unavailable semantic leg downgrades to keyword only;
-/// - exact filename/path matches are promoted and marked `exact`;
-/// - related documents stop at one hop.
 pub async fn run_query(ctx: &Projection, q: &ContextQuery) -> Result<SearchResult> {
     let mut degraded = Vec::new();
-
-    // Empty queries are served from the ledger's real mtime ordering.
-    let mut recent: Vec<RankedSlice> = Vec::new();
     if q.is_recent_request() {
-        let scope = q.scope.clone();
-        let limit = q.limit.clamp(1, 20);
-        let paths = ctx
-            .meta
-            .with(move |store| store.recent_paths(&scope, limit))
-            .await
-            .unwrap_or_else(|e| {
-                degraded.push(format!("recent metadata unavailable: {e}"));
-                Vec::new()
-            });
-        for path in paths {
-            recent.extend(ctx.index.slices_for_path(&path).await.unwrap_or_default());
-        }
+        return recent_result(ctx, q, &mut degraded).await;
     }
 
-    // Non-empty queries: collect candidates per leg, then RRF-fuse.
-    let mut keyword: Vec<RankedSlice> = Vec::new();
-    let mut semantic: Vec<RankedSlice> = Vec::new();
-    let mut exact: Vec<RankedSlice> = Vec::new();
-    if !q.is_recent_request() {
-        let semantic_expected = ctx.index.semantic_available();
-        keyword = ctx
-            .index
-            .search(q, semantic_expected)
-            .await
-            .unwrap_or_else(|e| {
-                degraded.push(format!("search index unavailable: {e}"));
-                Vec::new()
-            });
-        exact = exact_matches(ctx, q).await;
-        if let Some(embedder) = &ctx.embedder {
-            let embedder = embedder.clone();
-            let input = q.query.clone();
-            let embedded = tokio::task::spawn_blocking(move || match embedder.lock() {
-                Ok(mut embedder) => embedder
-                    .embed(vec![input])
-                    .map_err(|error| format!("embedding unavailable: {error}")),
-                Err(error) => Err(format!("embedding lock unavailable: {error}")),
-            })
-            .await
-            .unwrap_or_else(|error| Err(format!("embedding task failed: {error}")));
-            match embedded {
-                Ok(vectors) if !vectors.is_empty() => {
-                    match ctx.index.vector_search(q, &vectors[0]).await {
-                        Ok(mut found) => semantic.append(&mut found),
-                        Err(error) => degraded.push(format!("vector search unavailable: {error}")),
-                    }
-                }
-                Ok(_) => degraded.push("embedding returned no vector".into()),
-                Err(error) => degraded.push(error),
-            }
-        }
-    }
+    let query_vector = embed_query(ctx, q, &mut degraded).await;
+    let mut documents = retrieve_kind(
+        ctx,
+        q,
+        RetrievalUnitKind::Document,
+        q.document_limit,
+        query_vector.as_deref(),
+        true,
+        &mut degraded,
+    )
+    .await;
+    let mut fragments = retrieve_kind(
+        ctx,
+        q,
+        RetrievalUnitKind::Fragment,
+        q.fragment_limit,
+        query_vector.as_deref(),
+        false,
+        &mut degraded,
+    )
+    .await;
 
-    // Fuse each leg's ranking with RRF; `exact` matches are ranked first.
-    let mut rrf: std::collections::HashMap<String, (f64, Vec<String>)> =
-        std::collections::HashMap::new();
-    let mut add_leg = |leg: &[RankedSlice], source: &str| {
-        for (rank, hit) in leg.iter().enumerate() {
-            let entry = rrf
-                .entry(hit.slice.chunk_id.clone())
-                .or_insert_with(|| (0.0, Vec::new()));
-            entry.0 += 1.0 / (RRF_K + rank as f64 + 1.0);
-            if !entry.1.contains(&source.to_string()) {
-                entry.1.push(source.to_string());
-            }
+    hydrate(ctx, &mut documents).await?;
+    hydrate(ctx, &mut fragments).await?;
+    let related = if q.include_relations {
+        if let Some(primary) = documents.first().or_else(|| fragments.first()) {
+            related_for(ctx, primary.slice.path.0.as_str()).await
+        } else {
+            Vec::new()
         }
-    };
-    add_leg(&exact, "exact");
-    add_leg(&keyword, "keyword");
-    add_leg(&semantic, "semantic");
-
-    let mut candidates: Vec<RankedSlice> = if q.is_recent_request() {
-        recent
     } else {
-        // Rebuild ranked slices in RRF order, keeping the first slice text.
-        let mut by_id: std::collections::HashMap<String, &RankedSlice> =
-            std::collections::HashMap::new();
-        for hit in exact.iter().chain(keyword.iter()).chain(semantic.iter()) {
-            by_id.entry(hit.slice.chunk_id.clone()).or_insert(hit);
-        }
-        let mut out: Vec<RankedSlice> = rrf
-            .into_iter()
-            .map(|(chunk_id, (score, sources))| {
-                let hit = *by_id.get(&chunk_id).expect("rrf key came from a leg");
-                let mut ranked = hit.clone();
-                ranked.score = score;
-                ranked.sources = sources;
-                ranked
-            })
-            .collect();
-        out.sort_by(|a, b| b.score.total_cmp(&a.score));
-        out
+        Vec::new()
     };
-
-    if !q.tags.is_empty() || !q.note_types.is_empty() || !q.metadata_filters.is_empty() {
-        let mut filtered = Vec::with_capacity(candidates.len());
-        for hit in candidates {
-            let path = hit.slice.path.0.to_string();
-            let Ok(frontmatter) = ctx
-                .meta
-                .with(move |store| store.frontmatter_for_path(&path))
-                .await
-            else {
-                continue;
-            };
-            let tags_match = q.tags.iter().all(|wanted| {
-                frontmatter
-                    .get("tags")
-                    .and_then(serde_json::Value::as_array)
-                    .is_some_and(|tags| tags.iter().any(|tag| tag.as_str() == Some(wanted)))
-            });
-            let types_match = q.note_types.is_empty()
-                || frontmatter
-                    .get("type")
-                    .and_then(serde_json::Value::as_str)
-                    .is_some_and(|kind| q.note_types.iter().any(|wanted| wanted == kind));
-            let metadata_match = q
-                .metadata_filters
-                .iter()
-                .all(|(key, expected)| frontmatter.get(key) == Some(expected));
-            if tags_match && types_match && metadata_match {
-                filtered.push(hit);
-            }
-        }
-        candidates = filtered;
-    }
-
-    let mut per_document = std::collections::HashMap::new();
-    candidates.retain(|hit| {
-        let count = per_document.entry(hit.slice.path.clone()).or_insert(0usize);
-        *count += 1;
-        *count <= 2
-    });
-
-    // Attach one-hop related documents for the top-ranked hit paths.
-    let mut seen: Vec<String> = Vec::new();
-    let mut related: Vec<RelatedDocument> = Vec::new();
-    for r in &mut candidates {
-        let path_str = r.slice.path.0.as_str().to_string();
-        if seen.contains(&path_str) {
-            continue;
-        }
-        seen.push(path_str.clone());
-        let rel = related_for(ctx, &path_str).await;
-        if !rel.is_empty() {
-            related.extend(rel);
-            break; // only enrich the primary hit with its relations
-        }
-    }
-
-    // Cap candidates at the requested limit.
-    candidates.truncate(q.limit);
-
-    for hit in &mut candidates {
-        let path = hit.slice.path.0.to_string();
-        let lookup_path = path.clone();
-        let (fingerprint, frontmatter) = ctx
-            .meta
-            .with(move |store| {
-                Ok((
-                    store.ledger_fingerprint(&lookup_path)?,
-                    store.frontmatter_for_path(&lookup_path)?,
-                ))
-            })
-            .await?;
-        hit.filename = display_name(&path);
-        hit.modified_at_ns = fingerprint.mtime_ns;
-        hit.frontmatter = frontmatter;
-    }
-
-    let strategy = if q.is_recent_request() {
-        SearchStrategy::Recent
-    } else if candidates
+    let has_semantic = documents
         .iter()
-        .any(|hit| hit.sources.iter().any(|source| source == "semantic"))
-    {
-        SearchStrategy::Hybrid
-    } else {
-        SearchStrategy::Keyword
-    };
-
+        .chain(&fragments)
+        .any(|hit| hit.sources.iter().any(|source| source == "semantic"));
     Ok(SearchResult {
-        strategy,
-        slices: candidates,
+        strategy: if has_semantic {
+            SearchStrategy::Hybrid
+        } else {
+            SearchStrategy::Keyword
+        },
+        documents,
+        fragments,
         related,
         degraded,
     })
 }
 
-/// Exact-match candidates: indexed paths whose filename stem or relative path
-/// equals the query text (case-insensitive, trimmed). They rank at the top of
-/// the RRF fusion and carry the `exact` source.
-async fn exact_matches(ctx: &Projection, q: &ContextQuery) -> Vec<RankedSlice> {
-    if q.query.trim().is_empty() || q.query.chars().count() > 64 {
-        return Vec::new();
-    }
-    let wanted = q.query.trim().to_lowercase();
-    let Ok(paths) = ctx.meta.with(|store| store.all_paths()).await else {
-        return Vec::new();
+async fn recent_result(
+    ctx: &Projection,
+    q: &ContextQuery,
+    degraded: &mut Vec<String>,
+) -> Result<SearchResult> {
+    let limit = q.document_limit.clamp(1, 20);
+    let mut documents = ctx.index.browse_documents(q, limit).await?;
+    hydrate(ctx, &mut documents).await?;
+    let related = if q.include_relations {
+        if let Some(primary) = documents.first() {
+            related_for(ctx, primary.slice.path.0.as_str()).await
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
     };
-    let mut out = Vec::new();
-    for path in paths {
-        let filename = display_name(&path).to_lowercase();
-        if (path.to_lowercase() == wanted || filename == wanted)
-            && let Ok(slices) = ctx.index.slices_for_path(&path).await
-        {
-            out.extend(slices.into_iter().take(q.limit.clamp(1, 20)));
+    Ok(SearchResult {
+        strategy: SearchStrategy::Recent,
+        documents,
+        fragments: Vec::new(),
+        related,
+        degraded: std::mem::take(degraded),
+    })
+}
+
+async fn embed_query(
+    ctx: &Projection,
+    q: &ContextQuery,
+    degraded: &mut Vec<String>,
+) -> Option<Vec<f32>> {
+    let Some(embedder) = &ctx.embedder else {
+        return None;
+    };
+    if q.query.trim().is_empty() {
+        return None;
+    }
+    let embedder = embedder.clone();
+    let input = q.query.clone();
+    let embedded = tokio::task::spawn_blocking(move || match embedder.lock() {
+        Ok(mut embedder) => embedder
+            .embed(vec![input])
+            .map_err(|error| format!("embedding unavailable: {error}")),
+        Err(error) => Err(format!("embedding lock unavailable: {error}")),
+    })
+    .await
+    .unwrap_or_else(|error| Err(format!("embedding task failed: {error}")));
+    match embedded {
+        Ok(mut vectors) if !vectors.is_empty() => Some(vectors.remove(0)),
+        Ok(_) => {
+            degraded.push("embedding returned no vector".into());
+            None
+        }
+        Err(error) => {
+            degraded.push(error);
+            None
         }
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn retrieve_kind(
+    ctx: &Projection,
+    q: &ContextQuery,
+    kind: RetrievalUnitKind,
+    result_limit: usize,
+    query_vector: Option<&[f32]>,
+    include_exact: bool,
+    degraded: &mut Vec<String>,
+) -> Vec<RankedSlice> {
+    let candidate_limit = result_limit.saturating_mul(5).clamp(50, 200);
+    let mut legs: Vec<(&str, Vec<RankedSlice>)> = Vec::new();
+    if !q.query.trim().is_empty() {
+        match ctx
+            .index
+            .search(q, &q.query, kind, candidate_limit, "keyword")
+            .await
+        {
+            Ok(hits) => legs.push(("keyword", hits)),
+            Err(error) => degraded.push(format!("keyword search unavailable: {error}")),
+        }
+    }
+    if !q.keywords.is_empty() {
+        match keyword_hits(ctx, q, kind, candidate_limit).await {
+            Ok(hits) => legs.push(("keywords", hits)),
+            Err(error) => degraded.push(format!("explicit keyword search unavailable: {error}")),
+        }
+    }
+    if let Some(vector) = query_vector {
+        match ctx
+            .index
+            .vector_search(q, vector, kind, candidate_limit)
+            .await
+        {
+            Ok(hits) => legs.push(("semantic", hits)),
+            Err(error) => degraded.push(format!("vector search unavailable: {error}")),
+        }
+    }
+    if include_exact {
+        let hits = exact_matches(ctx, q).await;
+        if !hits.is_empty() {
+            legs.push(("exact", hits));
+        }
+    }
+    let mut fused = fuse(&legs);
+    if q.order == SearchOrder::ModifiedDesc {
+        fused.sort_by(|a, b| {
+            b.slice
+                .modified_at_ns
+                .cmp(&a.slice.modified_at_ns)
+                .then_with(|| b.score.total_cmp(&a.score))
+        });
+    }
+    fused.truncate(result_limit.clamp(1, 20));
+    fused
+}
+
+async fn keyword_hits(
+    ctx: &Projection,
+    q: &ContextQuery,
+    kind: RetrievalUnitKind,
+    limit: usize,
+) -> Result<Vec<RankedSlice>> {
+    if q.keyword_mode == KeywordMode::Any {
+        let mut by_id: HashMap<String, RankedSlice> = HashMap::new();
+        for keyword in &q.keywords {
+            for hit in ctx
+                .index
+                .search(q, keyword, kind, limit, "keywords")
+                .await?
+            {
+                by_id
+                    .entry(hit.slice.chunk_id.clone())
+                    .and_modify(|current| current.score += hit.score)
+                    .or_insert(hit);
+            }
+        }
+        let mut hits = by_id.into_values().collect::<Vec<_>>();
+        hits.sort_by(|a, b| b.score.total_cmp(&a.score));
+        hits.truncate(limit);
+        return Ok(hits);
+    }
+    let mut legs = Vec::new();
+    for keyword in &q.keywords {
+        legs.push(
+            ctx.index
+                .search(q, keyword, kind, limit, "keywords")
+                .await?,
+        );
+    }
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    let mut by_id = HashMap::new();
+    for leg in legs {
+        let mut seen = HashSet::new();
+        for hit in leg {
+            if seen.insert(hit.slice.chunk_id.clone()) {
+                *counts.entry(hit.slice.chunk_id.clone()).or_default() += 1;
+                by_id.entry(hit.slice.chunk_id.clone()).or_insert(hit);
+            }
+        }
+    }
+    let required = q.keywords.len();
+    let mut hits = counts
+        .into_iter()
+        .filter(|(_, count)| *count == required)
+        .filter_map(|(id, _)| by_id.remove(&id))
+        .collect::<Vec<_>>();
+    hits.sort_by(|a, b| b.score.total_cmp(&a.score));
+    hits.truncate(limit);
+    Ok(hits)
+}
+
+fn fuse(legs: &[(&str, Vec<RankedSlice>)]) -> Vec<RankedSlice> {
+    let mut scores: HashMap<String, (f64, Vec<String>)> = HashMap::new();
+    let mut hits: HashMap<String, RankedSlice> = HashMap::new();
+    for (source, leg) in legs {
+        for (rank, hit) in leg.iter().enumerate() {
+            hits.entry(hit.slice.chunk_id.clone())
+                .or_insert_with(|| hit.clone());
+            let entry = scores
+                .entry(hit.slice.chunk_id.clone())
+                .or_insert_with(|| (0.0, Vec::new()));
+            entry.0 += 1.0 / (RRF_K + rank as f64 + 1.0);
+            if !entry.1.iter().any(|existing| existing == source) {
+                entry.1.push((*source).to_owned());
+            }
+        }
+    }
+    let mut out = scores
+        .into_iter()
+        .filter_map(|(id, (score, sources))| {
+            hits.remove(&id).map(|mut hit| {
+                hit.score = score;
+                hit.sources = sources;
+                hit
+            })
+        })
+        .collect::<Vec<_>>();
+    out.sort_by(|a, b| b.score.total_cmp(&a.score));
     out
 }
 
-/// One-hop related documents for a path, read from the metadata edge store
-/// (outgoing first, then incoming, at most five). Best-effort: misses degrade
-/// to an empty list, never an error.
+async fn exact_matches(ctx: &Projection, q: &ContextQuery) -> Vec<RankedSlice> {
+    if q.query.trim().is_empty() || q.query.chars().count() > 128 {
+        return Vec::new();
+    }
+    ctx.index
+        .exact_documents(q, q.query.trim())
+        .await
+        .unwrap_or_default()
+}
+
+async fn hydrate(ctx: &Projection, hits: &mut [RankedSlice]) -> Result<()> {
+    let paths = hits
+        .iter()
+        .filter(|hit| hit.slice.frontmatter.is_empty())
+        .map(|hit| hit.slice.path.0.to_string())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let frontmatter = ctx.index.frontmatter_for_paths(&paths).await?;
+    for hit in hits {
+        let path = hit.slice.path.0.to_string();
+        hit.frontmatter = if hit.slice.frontmatter.is_empty() {
+            frontmatter.get(&path).cloned().unwrap_or_default()
+        } else {
+            hit.slice.frontmatter.clone()
+        };
+        hit.filename = display_name(&path);
+        hit.modified_at_ns = hit.slice.modified_at_ns;
+    }
+    Ok(())
+}
+
 async fn related_for(ctx: &Projection, path: &str) -> Vec<RelatedDocument> {
+    let edges = ctx.index.relations_for_path(path).await.unwrap_or_default();
     let mut out = Vec::new();
-    let path_owned = path.to_owned();
-    let outgoing = ctx
-        .meta
-        .with(move |store| store.edges_for_path(&path_owned))
-        .await
-        .unwrap_or_default();
-    let path_owned = path.to_owned();
-    let incoming = ctx
-        .meta
-        .with(move |store| store.edges_to_path(&path_owned))
-        .await
-        .unwrap_or_default();
-    for edge in outgoing.into_iter().chain(incoming) {
-        let from = edge.from.0.as_str();
-        let direction = if from == path {
+    for edge in edges {
+        let direction = if edge.from.0.as_str() == path {
             crate::retrieval::types::RelationDirection::Outgoing
         } else {
             crate::retrieval::types::RelationDirection::Incoming
         };
-        let target = edge.to.0.to_string();
-        let title = display_name(&target);
+        let related_path = if direction == crate::retrieval::types::RelationDirection::Outgoing {
+            edge.to.clone()
+        } else {
+            edge.from.clone()
+        };
         let context = section_context(ctx, &edge.from, &edge.section_source).await;
         out.push(RelatedDocument {
-            path: edge.to,
-            filename: title,
+            filename: display_name(related_path.0.as_str()),
+            path: related_path,
             relation_type: edge.relation_type,
             direction,
             status: edge.status,
@@ -298,16 +340,19 @@ fn display_name(path: &str) -> String {
         .to_owned()
 }
 
-/// Recover the source text of the section that declared a relation, from the
-/// indexed slices of the declaring document (bounded; best-effort).
 async fn section_context(ctx: &Projection, from: &PathScope, section: &str) -> String {
     let Ok(slices) = ctx.index.slices_for_path(from.0.as_str()).await else {
         return String::new();
     };
     slices
         .iter()
+        .filter(|hit| hit.slice.unit_kind == RetrievalUnitKind::Fragment)
         .find(|hit| hit.slice.section == section)
-        .or_else(|| slices.first())
-        .map(|hit| hit.slice.content.chars().take(120).collect::<String>())
+        .or_else(|| {
+            slices
+                .iter()
+                .find(|hit| hit.slice.unit_kind == RetrievalUnitKind::Fragment)
+        })
+        .map(|hit| hit.slice.content.chars().take(120).collect())
         .unwrap_or_default()
 }

@@ -24,11 +24,35 @@ pub struct Document {
 pub struct Slice {
     pub path: PathScope,
     pub chunk_id: String,
+    pub unit_kind: RetrievalUnitKind,
+    pub note_type: String,
+    pub tags: Vec<String>,
+    pub facets: Vec<String>,
+    pub title: String,
+    pub aliases: Vec<String>,
+    pub frontmatter: Frontmatter,
+    pub modified_at_ns: i64,
     pub ordinal: u32,
     pub section: String,
     pub content: String,
     pub search_text: String,
     pub source_hash: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RetrievalUnitKind {
+    Document,
+    Fragment,
+}
+
+impl RetrievalUnitKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Document => "document",
+            Self::Fragment => "fragment",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
