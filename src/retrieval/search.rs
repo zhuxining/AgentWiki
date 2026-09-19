@@ -15,7 +15,12 @@ pub async fn run_query(ctx: &Projection, q: &ContextQuery) -> Result<SearchResul
         return recent_result(ctx, q, &mut degraded).await;
     }
 
-    let query_vector = embed_query(ctx, q, &mut degraded).await;
+    // A chronological result set is defined by lexical matches, not uncalibrated neighbours.
+    let query_vector = if q.order == SearchOrder::ModifiedDesc {
+        None
+    } else {
+        embed_query(ctx, q, &mut degraded).await
+    };
     let mut documents = retrieve_kind(
         ctx,
         q,
@@ -41,7 +46,7 @@ pub async fn run_query(ctx: &Projection, q: &ContextQuery) -> Result<SearchResul
     hydrate(ctx, &mut fragments).await?;
     let related = if q.include_relations {
         if let Some(primary) = documents.first().or_else(|| fragments.first()) {
-            related_for(ctx, primary.slice.path.0.as_str()).await
+            related_for(ctx, primary.slice.path.0.as_str(), &mut degraded).await
         } else {
             Vec::new()
         }
@@ -75,7 +80,7 @@ async fn recent_result(
     hydrate(ctx, &mut documents).await?;
     let related = if q.include_relations {
         if let Some(primary) = documents.first() {
-            related_for(ctx, primary.slice.path.0.as_str()).await
+            related_for(ctx, primary.slice.path.0.as_str(), degraded).await
         } else {
             Vec::new()
         }
@@ -96,17 +101,19 @@ async fn embed_query(
     q: &ContextQuery,
     degraded: &mut Vec<String>,
 ) -> Option<Vec<f32>> {
-    let Some(embedder) = &ctx.embedder else {
-        return None;
-    };
-    if q.query.trim().is_empty() {
+    // A deliberately disabled model is not a fault; only a configured model that
+    // fails to load or infer degrades the query.
+    if q.query.trim().is_empty() || ctx.embedding_model.is_none() {
         return None;
     }
-    let embedder = embedder.clone();
+    let Some(embedder) = ctx.embedder().await else {
+        degraded.push("embedding unavailable".into());
+        return None;
+    };
     let input = q.query.clone();
     let embedded = tokio::task::spawn_blocking(move || match embedder.lock() {
         Ok(mut embedder) => embedder
-            .embed(vec![input])
+            .embed(vec![input], Some(1))
             .map_err(|error| format!("embedding unavailable: {error}")),
         Err(error) => Err(format!("embedding lock unavailable: {error}")),
     })
@@ -156,10 +163,17 @@ async fn retrieve_kind(
             Ok(hits) => hits,
             Err(error) => {
                 degraded.push(format!("hybrid search unavailable: {error}"));
-                ctx.index
+                match ctx
+                    .index
                     .search(q, &text, kind, candidate_limit, "keyword")
                     .await
-                    .unwrap_or_default()
+                {
+                    Ok(hits) => hits,
+                    Err(error) => {
+                        degraded.push(format!("keyword fallback unavailable: {error}"));
+                        Vec::new()
+                    }
+                }
             }
         }
     } else {
@@ -176,7 +190,27 @@ async fn retrieve_kind(
         }
     };
     if include_exact {
-        let exact = exact_matches(ctx, q).await;
+        let mut exact = match exact_matches(ctx, q).await {
+            Ok(hits) => hits,
+            Err(error) => {
+                degraded.push(format!("exact search unavailable: {error}"));
+                Vec::new()
+            }
+        };
+        for exact_hit in &mut exact {
+            if let Some(hit) = fused
+                .iter()
+                .find(|hit| hit.slice.chunk_id == exact_hit.slice.chunk_id)
+            {
+                exact_hit.score = hit.score;
+                exact_hit.sources.extend(
+                    hit.sources
+                        .iter()
+                        .filter(|s| s.as_str() != "exact")
+                        .cloned(),
+                );
+            }
+        }
         let mut seen = exact
             .iter()
             .map(|h| h.slice.chunk_id.clone())
@@ -201,14 +235,11 @@ async fn retrieve_kind(
     fused
 }
 
-async fn exact_matches(ctx: &Projection, q: &ContextQuery) -> Vec<RankedSlice> {
-    if q.query.trim().is_empty() || q.query.chars().count() > 128 {
-        return Vec::new();
+async fn exact_matches(ctx: &Projection, q: &ContextQuery) -> Result<Vec<RankedSlice>> {
+    if q.query.trim().is_empty() {
+        return Ok(Vec::new());
     }
-    ctx.index
-        .exact_documents(q, q.query.trim())
-        .await
-        .unwrap_or_default()
+    ctx.index.exact_documents(q, q.query.trim()).await
 }
 
 async fn hydrate(ctx: &Projection, hits: &mut [RankedSlice]) -> Result<()> {
@@ -233,8 +264,18 @@ async fn hydrate(ctx: &Projection, hits: &mut [RankedSlice]) -> Result<()> {
     Ok(())
 }
 
-async fn related_for(ctx: &Projection, path: &str) -> Vec<RelatedDocument> {
-    let edges = ctx.index.relations_for_path(path).await.unwrap_or_default();
+async fn related_for(
+    ctx: &Projection,
+    path: &str,
+    degraded: &mut Vec<String>,
+) -> Vec<RelatedDocument> {
+    let edges = match ctx.index.relations_for_path(path).await {
+        Ok(edges) => edges,
+        Err(error) => {
+            degraded.push(format!("relations unavailable: {error}"));
+            return Vec::new();
+        }
+    };
     let mut out = Vec::new();
     for edge in edges {
         let direction = if edge.from.0.as_str() == path {

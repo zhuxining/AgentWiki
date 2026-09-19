@@ -76,6 +76,8 @@ enum Command {
     SyncIndex,
     /// Wipe derived projections and rebuild from Markdown.
     RebuildIndex,
+    /// Fold new rows into existing LanceDB indices (explicit maintenance).
+    OptimizeIndex,
     /// Validate Markdown, frontmatter and internal links. Reports only.
     ValidateWiki {
         /// Validate a single wiki-relative path; omit to validate the whole wiki.
@@ -167,7 +169,6 @@ async fn run() -> anyhow::Result<()> {
                     SearchOrder::Relevance
                 },
                 include_relations,
-                ..Default::default()
             };
             let res = wiki.query(q).await?;
             for hit in &res.documents {
@@ -206,6 +207,10 @@ async fn run() -> anyhow::Result<()> {
         Command::RebuildIndex => {
             let report = wiki.rebuild().await?;
             print_report(&report);
+        }
+        Command::OptimizeIndex => {
+            wiki.maintain_indexes().await?;
+            println!("indexes repaired and updated");
         }
         Command::ValidateWiki {
             path,

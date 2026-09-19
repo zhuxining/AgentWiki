@@ -16,8 +16,12 @@ impl Embedder {
             .map_err(|e| e.to_string())
     }
 
-    /// Embed a batch of prepared chunk inputs.
-    pub fn embed(&mut self, inputs: Vec<String>) -> Result<Vec<Embedding>, String> {
-        self.0.embed(inputs, None).map_err(|e| e.to_string())
+    /// Embed prepared chunk or query inputs, letting FastEmbed batch internally.
+    pub fn embed(
+        &mut self,
+        inputs: Vec<String>,
+        batch_size: Option<usize>,
+    ) -> Result<Vec<Embedding>, String> {
+        self.0.embed(inputs, batch_size).map_err(|e| e.to_string())
     }
 }

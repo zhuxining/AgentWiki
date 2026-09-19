@@ -27,10 +27,10 @@ include_relations: bool = false
 ```
 
 - 空 query 且空 keywords 返回结构化过滤后的最近修改文档；非空 query 使用 LanceDB FTS，并在启用模型时追加语义检索。
-- keywords 是 Agent 显式提供的词法查询；any 取任一命中，all 要求同一检索单元命中全部关键词。AgentWiki 不从 query 自动推导 keywords。
+- keywords 是 Agent 显式提供的词法查询，也是全局硬约束：any 要求同一检索单元命中任一关键词，all 要求命中全部；精确路径/alias 和语义候选都不能绕过该约束。query 只在该约束内影响召回和排序。AgentWiki 不从 query 自动推导 keywords。
 - scope 是 Wiki 相对目录或文档，空值表示全库；越界和非法参数返回错误。
 - tags 全部满足，note_types 匹配任一类型，metadata_filters 按 Frontmatter 字段等值匹配；这些条件在 LanceDB 的 FTS/向量召回前下推，不执行 top-k 后过滤。
-- modified_after_ns/modified_before_ns 过滤真实文件 mtime；order 由 Agent 显式指定，内核不从查询文本猜测时间意图。
+- modified_after_ns/modified_before_ns 过滤真实文件 mtime；order 由 Agent 显式指定，内核不从查询文本猜测时间意图。order=modified_desc 时结果集由词法匹配定义，按真实 mtime 取最新的若干条，而不是在相关性候选内部重排；该模式代价随匹配规模增长。
 - 每篇文档生成一个 document 单元，正文统一按 Markdown 标题切分，超长章节再用 text-splitter 切分。文档和片段分别排名。
 
 目标返回示例：
@@ -59,11 +59,11 @@ include_relations: bool = false
 }
 ```
 
-strategy 为 recent、keyword 或 hybrid，表示实际采用的策略。rank_score 仅解释本次排序，不是相似度或置信度，不跨查询比较，也不承诺固定公式近似值。match_sources 使用实际参与的 exact、keyword、semantic、recency 来源；不得从开启的配置推断命中来源。truncated 表示 documents 或 fragments 达到请求限额。
+strategy 为 recent、keyword 或 hybrid，表示实际采用的策略。rank_score 原生排序分数，仅解释本次排序，不是相似度或置信度，不跨查询比较，也不承诺固定公式近似值。match_sources 使用实际参与的 exact、keyword、semantic、recency 来源：Hybrid 复用 Lance 原生 RRF，每条结果的来源由该结果实际命中的检索腿决定，不得从开启的配置推断命中来源。truncated 表示 documents 或 fragments 达到请求限额。
 
 include_relations=true 时 relations 最多返回五条一跳入边或出边；仅返回边和声明上下文，不自动读取目标文档或扩展多跳。
 
-查询前执行增量同步。首次或变化后的查询允许等待同步向量批处理，不存在后台任务完成通知。向量按实际输入哈希与模型身份复用，模型变化使旧向量失效并重新计算；失败记录留待后续同步重试。
+查询前执行增量同步。stat 未变化的文档不读取不解析；内容哈希相同的文档只刷新文件指纹，模型身份与嵌入输入都未变化的切片直接复用已有向量，只对其余切片批量推理。首次或变化后的查询允许等待同步向量批处理，不存在后台任务完成通知。模型变化使旧向量失效并重新计算；失败记录留待后续同步重试。
 
 启用模型但不可用、文档同步失败和非法 relations 等进入 degraded。主动关闭模型、正常无匹配不记作故障；无匹配正常返回空 documents、fragments 和 relations。语义故障保留关键词能力，全部检索来源失败必须明确报告，不能伪装成正常无匹配。保留旧投影的失败文档需标明路径和过期原因。
 
@@ -77,7 +77,7 @@ scope: str = ""
 
 返回根规则、匹配范围的目录规则、default_type、required_fields、tag_aliases、动态 known_tags、wiki_root 和 guide_content。结构化规则见 [规则参考](RULES.md)，guide_content 来自 Wiki 根目录 AGENTWIKI.md 正文。
 
-返回 source_modified_at_ns 和 source_size 表示规则文件指纹，只用于判断规则内容是否变化。known_tags 随文档投影变化更新，不能仅按规则文件指纹缓存。调用时先确认文档投影新鲜度；为读取规则不启动无关 embedding 计算。
+返回 source_modified_at_ns 和 source_size 表示规则文件指纹，只用于判断规则内容是否变化。known_tags 随文档投影变化更新，不能仅按规则文件指纹缓存。调用时先确认文档投影新鲜度；该路径只刷新文档元数据，不为读取规则启动 embedding 推理，向量留待下一次检索补偿。
 
 新建、移动或首次修改陌生范围前调用；同一范围的连续编辑可复用规则，但不得将规则文件未变理解为标签集合未变。`type`、`tags`、`summary` 是内置必填字段；新标签只警告，允许扩展 Frontmatter。
 

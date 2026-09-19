@@ -27,9 +27,16 @@
 ### 同步与检索
 
 - [ ] Markdown 是唯一事实源；索引可删除重建，索引失败不覆盖原文。
-- [ ] 未变化文件跳过解析；内容变化只解析一次；删除、唯一内容哈希移动和失败重试语义正确。
+- [ ] 未变化文件跳过解析；内容哈希相同只刷新指纹且不解析；内容变化只解析一次；删除、唯一内容哈希移动和失败重试语义正确。
+- [ ] 同内容只改 mtime 时，文档与片段的时间一致，时间过滤与 recent 查询反映真实 mtime。
+- [ ] 向量按模型身份、维度和嵌入输入哈希复用，只对变化切片推理；指纹写入失败或中断后下次同步可重试。
+- [ ] 投影版本不匹配只重建 `wiki_rows`；中断的建索引在下次打开或同步后补齐。新增行未并入索引时仍可召回。
 - [ ] 关键词检索使用 LanceDB FTS；启用模型时可追加语义检索，失败保留关键词能力并报告 `degraded`。
 - [ ] 空查询按真实文件 mtime 返回近期文档；scope、标签、类型、元数据和时间过滤在召回前生效。
+- [ ] 每个单元的 `search_text` 不超过 512 token 预算；中文长章节被切分为多个片段且无内容丢失；超长摘要截断后仍能被文档级检索命中；`MarkdownSplitter` 不切开能装下的代码块和段落。
+- [ ] scope 含 `_`、`%` 时按字面路径匹配；YAML 整数与 JSON 整数元数据过滤一致。
+- [ ] `keywords` 的 any/all 是硬约束，query 命中或语义候选不能绕过；`order=modified_desc` 返回全部匹配项中最新的结果。
+- [ ] match_sources 反映每条结果实际参与的检索腿，不由启用配置推断。
 - [ ] document 与 fragment 分开返回；精确路径/文件名优先；关系默认关闭，显式开启时最多返回一跳关系。
 - [ ] 正常无匹配返回空结果，不伪装为系统故障；`rank_score` 不被解释为概率或置信度。
 
@@ -43,7 +50,7 @@
 
 ### CLI 与 MCP
 
-- [ ] CLI 与 MCP 共用 `AgentWiki` 用例层，查询、校验和默认值语义一致。
+- [ ] CLI 与 MCP 共用 `AgentWiki` 用例层，查询、校验和默认值语义一致；`optimize-index` 是唯一的显式索引并入入口，查询路径不隐式 optimize。
 - [ ] MCP 提供 `get_wiki_context`、`get_wiki_rules`、`validate_wiki` 三个工具。
 - [ ] `get_wiki_context` 返回 query、scope、strategy、degraded、documents、fragments、relations、truncated。
 - [ ] `get_wiki_rules` 返回有效规则、动态 `known_tags`、Wiki 根目录、指引正文和规则文件指纹。

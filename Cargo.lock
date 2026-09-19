@@ -15,6 +15,7 @@ dependencies = [
  "anyhow",
  "arrow-array",
  "arrow-schema",
+ "async-trait",
  "camino",
  "clap",
  "dirs 7.0.0",

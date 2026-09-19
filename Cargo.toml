@@ -52,7 +52,10 @@ tempfile = "3"
 # ---------------------------------------------------------------------------
 # Retrieval (embedded LanceDB + local embeddings)
 # ---------------------------------------------------------------------------
+# `remote` stays required: lancedb 0.39 fails to compile its own `job.rs` without it.
 lancedb = { version = "0.39", features = ["remote"] }
+# Implement LanceDB's reranker hook to attach actual per-leg evidence; RRF stays native.
+async-trait = "0.1"
 lance-index = "12"
 arrow-array = "58"
 arrow-schema = "58"

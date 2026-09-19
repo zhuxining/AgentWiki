@@ -77,6 +77,12 @@ impl AgentWiki {
         self.projection.lock().await.rebuild().await
     }
 
+    /// Explicit maintenance for derived indices; never triggered by queries.
+    pub async fn maintain_indexes(&self) -> Result<()> {
+        let _operation = self.operation.lock().await;
+        self.projection.lock().await.maintain().await
+    }
+
     pub async fn query(&self, query: ContextQuery) -> Result<SearchResult> {
         validate_query(&query)?;
         crate::document::scope_path(&self.root, Utf8Path::new(&query.scope))?;
@@ -100,7 +106,8 @@ impl AgentWiki {
         let _operation = self.operation.lock().await;
         let known_tags = {
             let mut projection = self.projection.lock().await;
-            projection.ensure_fresh().await?;
+            // Rules only need fresh literal metadata, so skip semantic inference.
+            projection.ensure_fresh_without_vectors().await?;
             let mut counts: Vec<_> = projection.index.all_tags().await?.into_iter().collect();
             counts.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
             counts.into_iter().map(|(tag, _)| tag).collect()

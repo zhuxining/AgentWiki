@@ -64,7 +64,6 @@ pub struct ContextQuery {
     pub modified_before_ns: Option<i64>,
     pub order: SearchOrder,
     pub include_relations: bool,
-    pub min_similarity: f64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -101,7 +100,6 @@ impl Default for ContextQuery {
             modified_before_ns: None,
             order: SearchOrder::Relevance,
             include_relations: false,
-            min_similarity: SEMANTIC_MIN_SIMILARITY,
         }
     }
 }
@@ -111,5 +109,3 @@ impl ContextQuery {
         self.query.trim().is_empty() && self.keywords.is_empty()
     }
 }
-
-pub const SEMANTIC_MIN_SIMILARITY: f64 = 0.46;

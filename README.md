@@ -43,6 +43,7 @@ cargo build
 cargo run --bin agentwiki show-config
 cargo run --bin agentwiki sync-index
 cargo run --bin agentwiki rebuild-index
+cargo run --bin agentwiki optimize-index
 cargo run --bin agentwiki validate-wiki --path decisions/auth.md
 cargo run --bin agentwiki validate-wiki
 cargo run --bin agentwiki query "认证方案"
@@ -53,6 +54,8 @@ cargo run --bin agentwiki-mcp
 ```
 
 默认校验不写文件。单文件修复必须指定 `--path`，全库修复必须指定 `--full`；两种范围互斥。格式修复不修正标签、链接或业务内容。
+
+`optimize-index` 只把新增行并入既有索引，是显式维护动作；查询路径不会隐式 optimize，也不会因此少返回结果。
 
 ## 配置与数据
 
